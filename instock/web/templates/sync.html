@@ -1,0 +1,201 @@
+{% extends "layout/default.html" %}
+
+{% block main_content %}
+<div class="page-content" style="padding: 12px 16px; overflow: auto; height: 100%;">
+    <h3 class="header smaller lighter">数据同步</h3>
+    <p class="text-muted">在页面触发 <code>instock/job</code> 下作业（子进程执行），可查看每次运行是否成功及输出尾部。长任务请耐心等待，可下方刷新记录。</p>
+
+    <div class="well" style="max-width: 900px;">
+        <div class="form-group">
+            <label>作业</label>
+            <select id="syncJob" class="form-control" style="max-width: 480px;"></select>
+            <p id="syncHint" class="help-block" style="margin-top:8px;"></p>
+        </div>
+        <div class="form-group">
+            <label>日期参数</label>
+            <div>
+                <label class="radio-inline"><input type="radio" name="dm" value="default" checked> 默认（与命令行无参一致）</label>
+                <label class="radio-inline"><input type="radio" name="dm" value="list"> 枚举</label>
+                <label class="radio-inline"><input type="radio" name="dm" value="range"> 区间</label>
+            </div>
+        </div>
+        <div class="form-group" id="rowList" style="display:none;">
+            <label>多个日期（逗号分隔 YYYY-MM-DD）</label>
+            <input type="text" id="dateList" class="form-control" placeholder="2024-06-03,2024-06-05" style="max-width: 520px;">
+        </div>
+        <div class="form-group" id="rowRange" style="display:none;">
+            <label>开始 / 结束</label>
+            <div class="row" style="max-width: 520px;">
+                <div class="col-xs-6"><input type="text" id="dateStart" class="form-control" placeholder="2024-06-01"></div>
+                <div class="col-xs-6"><input type="text" id="dateEnd" class="form-control" placeholder="2024-06-30"></div>
+            </div>
+        </div>
+        <p class="text-warning" id="initHint" style="display:none;">「初始化数据库」仅支持默认模式（将忽略日期）。</p>
+        <button type="button" class="btn btn-primary" id="btnRun">开始执行</button>
+        <span id="runMsg" class="text-info" style="margin-left:12px;"></span>
+    </div>
+
+    <h4>执行记录 <button type="button" class="btn btn-sm btn-default" id="btnRefresh">刷新</button></h4>
+    <div class="table-responsive" style="max-height: 280px; overflow: auto; border: 1px solid #ddd;">
+        <table class="table table-striped table-bordered table-condensed" style="margin-bottom:0;">
+            <thead>
+                <tr>
+                    <th>开始时间</th>
+                    <th>作业</th>
+                    <th>状态</th>
+                    <th>退出码</th>
+                    <th>结束时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="runsBody"></tbody>
+        </table>
+    </div>
+
+    <h4 style="margin-top:16px;">输出详情 <span id="detailId" class="text-muted" style="font-size:12px;"></span></h4>
+    <div class="row">
+        <div class="col-sm-6">
+            <div><strong>stdout 尾部</strong></div>
+            <pre id="outPre" style="max-height:220px; overflow:auto; background:#f7f7f7; padding:8px; font-size:11px; white-space:pre-wrap;"></pre>
+        </div>
+        <div class="col-sm-6">
+            <div><strong>stderr 尾部</strong></div>
+            <pre id="errPre" style="max-height:220px; overflow:auto; background:#fff5f5; padding:8px; font-size:11px; white-space:pre-wrap;"></pre>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+(function () {
+    const jobsUrl = '/instock/api/sync/jobs';
+    const runsUrl = '/instock/api/sync/runs';
+    const postUrl = '/instock/api/sync/trigger';
+    const detailUrl = '/instock/api/sync/run_detail';
+
+    function esc(s) {
+        if (s == null) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function loadJobs() {
+        $.getJSON(jobsUrl, function (res) {
+            if (!res.ok) return;
+            const sel = $('#syncJob');
+            sel.empty();
+            res.jobs.forEach(function (j) {
+                sel.append($('<option></option>').val(j.id).text(j.title).attr('data-hint', j.hint || ''));
+            });
+            updateHint();
+        });
+    }
+
+    function updateHint() {
+        const opt = $('#syncJob option:selected');
+        $('#syncHint').text(opt.attr('data-hint') || '');
+        const id = $('#syncJob').val();
+        const isInit = id === 'init_job';
+        $('#initHint').toggle(isInit);
+        if (isInit) {
+            $('input[name="dm"][value="default"]').prop('checked', true);
+            $('#rowList,#rowRange').hide();
+        }
+    }
+
+    $('input[name="dm"]').on('change', function () {
+        const v = $('input[name="dm"]:checked').val();
+        $('#rowList').toggle(v === 'list');
+        $('#rowRange').toggle(v === 'range');
+    });
+
+    $('#syncJob').on('change', updateHint);
+
+    function statusBadge(st) {
+        if (st === 'running') return '<span class="label label-info">运行中</span>';
+        if (st === 'success') return '<span class="label label-success">成功</span>';
+        if (st === 'failed') return '<span class="label label-danger">失败</span>';
+        return esc(st);
+    }
+
+    function loadRuns() {
+        $.getJSON(runsUrl + '?limit=80', function (res) {
+            if (!res.ok) return;
+            const tb = $('#runsBody');
+            tb.empty();
+            res.runs.forEach(function (r) {
+                const tr = $('<tr></tr>');
+                tr.append($('<td></td>').text(r.started_at || ''));
+                tr.append($('<td></td>').text(r.label || r.job_id || ''));
+                tr.append($('<td></td>').html(statusBadge(r.status)));
+                tr.append($('<td></td>').text(r.exit_code == null ? '-' : r.exit_code));
+                tr.append($('<td></td>').text(r.finished_at || '-'));
+                const op = $('<button class="btn btn-xs btn-default">查看输出</button>');
+                op.on('click', function () { showDetail(r.id); });
+                tr.append($('<td></td>').append(op));
+                tb.append(tr);
+            });
+            const anyRun = res.runs.some(function (x) { return x.status === 'running'; });
+            if (anyRun) {
+                setTimeout(loadRuns, 2500);
+            }
+        });
+    }
+
+    function showDetail(id) {
+        $('#detailId').text('id: ' + id);
+        $.getJSON(detailUrl + '?id=' + encodeURIComponent(id), function (res) {
+            if (!res.ok) {
+                $('#outPre').text(res.error || '');
+                $('#errPre').text('');
+                return;
+            }
+            const r = res.run;
+            $('#outPre').text(r.stdout_tail || '');
+            $('#errPre').text(r.stderr_tail || (r.error_message || ''));
+        });
+    }
+
+    $('#btnRun').on('click', function () {
+        $('#runMsg').text('');
+        const job_id = $('#syncJob').val();
+        let date_mode = $('input[name="dm"]:checked').val();
+        const payload = { job_id: job_id, date_mode: date_mode, date_start: '', date_end: '', date_list: '' };
+        if (job_id === 'init_job') {
+            payload.date_mode = 'default';
+        } else if (date_mode === 'list') {
+            payload.date_list = $('#dateList').val().trim();
+        } else if (date_mode === 'range') {
+            payload.date_start = $('#dateStart').val().trim();
+            payload.date_end = $('#dateEnd').val().trim();
+        }
+        $.ajax({
+            url: postUrl,
+            method: 'POST',
+            contentType: 'application/json; charset=UTF-8',
+            data: JSON.stringify(payload),
+            success: function (res) {
+                if (res.ok) {
+                    $('#runMsg').text('已启动：' + res.run.id);
+                    loadRuns();
+                    showDetail(res.run.id);
+                } else {
+                    $('#runMsg').text(res.error || '失败');
+                }
+            },
+            error: function (xhr) {
+                let msg = '请求失败';
+                try {
+                    const j = JSON.parse(xhr.responseText);
+                    if (j.error) msg = j.error;
+                } catch (e) {}
+                $('#runMsg').text(msg);
+            }
+        });
+    });
+
+    $('#btnRefresh').on('click', loadRuns);
+
+    loadJobs();
+    loadRuns();
+})();
+</script>
+{% end %}

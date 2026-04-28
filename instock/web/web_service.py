@@ -26,7 +26,9 @@ import instock.lib.database as mdb
 import instock.lib.version as version
 import instock.web.dataTableHandler as dataTableHandler
 import instock.web.dataIndicatorsHandler as dataIndicatorsHandler
+import instock.web.sync_job_handler as syncJobHandler
 import instock.web.base as webBase
+import instock.web.sync_job_service as syncJobService
 
 __author__ = 'myh '
 __date__ = '2023/3/10 '
@@ -45,6 +47,12 @@ class Application(tornado.web.Application):
             (r"/instock/data/indicators", dataIndicatorsHandler.GetDataIndicatorsHandler),
             # 加入关注
             (r"/instock/control/attention", dataIndicatorsHandler.SaveCollectHandler),
+            # 数据同步（作业触发与记录）
+            (r"/instock/sync", syncJobHandler.SyncPageHandler),
+            (r"/instock/api/sync/jobs", syncJobHandler.SyncJobsApiHandler),
+            (r"/instock/api/sync/runs", syncJobHandler.SyncRunsApiHandler),
+            (r"/instock/api/sync/run_detail", syncJobHandler.SyncRunDetailApiHandler),
+            (r"/instock/api/sync/trigger", syncJobHandler.SyncRunPostHandler),
         ]
         settings = dict(  # 配置
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
@@ -57,6 +65,7 @@ class Application(tornado.web.Application):
         super(Application, self).__init__(handlers, **settings)
         # Have one global connection to the blog DB across all handlers
         self.db = torndb.Connection(**mdb.MYSQL_CONN_TORNDB)
+        syncJobService.init_history()
 
 
 # 首页handler。

@@ -1,0 +1,160 @@
+# InStock 快速开始
+
+用最短步骤把系统跑起来、拉一天数据、打开网页；文末说明**日志文件在哪、怎么看**。详细安装与环境排障见 [deployment.md](./deployment.md)，整体设计见 [architecture.md](./architecture.md)。
+
+**声明**：股市有风险，本项目仅供学习与研究。
+
+---
+
+## 1. 你需要先决定的事
+
+| 方式 | 适合你吗 |
+|------|-----------|
+| **Docker** | 已安装 Docker Desktop，想少配 Python / TA-Lib / MySQL，快速试用 Web。 |
+| **本机 Python** | 要在本地改代码、调试；需自行安装 Python 3.11、MySQL、TA-Lib 与 `requirements.txt`。 |
+
+下面两节各选其一即可。
+
+---
+
+## 2. 方式 A：Docker（最快上手）
+
+1. 按 [deployment.md](./deployment.md) 中 **「3. macOS + Docker 部署流程」** 一小节，准备好目录、`docker network`、**MariaDB** 容器与 **InStock** 容器（端口 **9988**）。
+
+2. 容器启动后，浏览器打开：**http://localhost:9988/**
+
+3. 镜像内已通过 **supervisor** 启动 Web，并由 **cron** 定时跑抓取任务（盘中增量 + 工作日盘后作业）。首次若无数据，界面可能较空，可在容器内手跑一次作业（见 §4）。
+
+---
+
+## 3. 方式 B：本机 Python
+
+以下均在**仓库根目录**（含有 `requirements.txt` 与 `instock/` 包目录的那一层）执行。
+
+1. **安装依赖**：Python 3.11、MySQL、TA-Lib C 库、`pip install -r requirements.txt`，配置 **`instock/lib/database.py`**。完整命令见 [deployment.md](./deployment.md) 中 **「2. macOS 本机 Python 部署流程」**。
+
+2. **初始化数据库（首次）**
+
+   ```bash
+   python3 instock/job/init_job.py
+   ```
+
+3. **启动 Web**
+
+   ```bash
+   python3 instock/web/web_service.py
+   ```
+
+   浏览器访问：**http://localhost:9988/**
+
+4. **拉取数据（另开一个终端，仍在仓库根目录）**
+
+   ```bash
+   python3 instock/job/execute_daily_job.py
+   ```
+
+   或先跑「当日快照」类作业：
+
+   ```bash
+   python3 instock/job/basic_data_daily_job.py
+   ```
+
+---
+
+## 4. 日常使用：你可以做什么
+
+| 你想做的事 | 怎么做 |
+|------------|--------|
+| 看数据表格 | 浏览器打开 **http://localhost:9988/**，左侧模块点开查询（数据需已有对应表）。 |
+| 网页触发同步作业、查看成功/失败 | **http://localhost:9988/instock/sync**（说明见 [jobs.md](./jobs.md)） |
+| 跑「当天默认交易日」的一整套日作业 | `python3 instock/job/execute_daily_job.py`（本机）；Docker 见 README / deployment 中 `docker exec` 运行同名脚本路径。 |
+| 只更新行情快照 | `python3 instock/job/basic_data_daily_job.py` |
+| 补某一天 | `python3 instock/job/execute_daily_job.py 2024-06-03` |
+| 补多个日期 | `python3 instock/job/execute_daily_job.py 2024-06-03,2024-06-05` |
+| 补日期区间（区间内每个交易日） | `python3 instock/job/execute_daily_job.py 2024-06-01 2024-06-28` |
+
+说明：`execute_daily_job` 当前仓库版本可能在源码里**注释掉了部分子任务**（指标 / K 线 / 策略 / 回测），若界面缺少某类数据，可单独运行对应脚本，例如：
+
+```bash
+python3 instock/job/indicators_data_daily_job.py
+python3 instock/job/strategy_data_daily_job.py
+python3 instock/job/backtest_data_daily_job.py
+```
+
+更多脚本列表见 [architecture.md](./architecture.md) **§7.2（单功能作业脚本）**。
+
+---
+
+## 5. 如何查看日志
+
+### 5.1 本机 Python：两个主要日志
+
+所有路径相对于**仓库根**，日志目录为 **`instock/log/`**（若不存在，多数脚本首次运行会创建）。
+
+| 日志文件 | 什么时候写入 | 用途 |
+|----------|----------------|------|
+| **`instock/log/stock_execute_job.log`** | 运行 `instock/job/*.py` 各类作业时 | 抓取、入库、策略任务的错误与过程信息（作业脚本里 `logging` 配置指向此文件）。 |
+| **`instock/log/stock_web.log`** | 运行 `instock/web/web_service.py` 时 | Web 服务侧写入的错误级日志（配置见 `web_service.py`）。 |
+
+常用命令：
+
+```bash
+# 实时跟踪作业日志
+tail -f instock/log/stock_execute_job.log
+
+# 实时跟踪 Web 日志
+tail -f instock/log/stock_web.log
+
+# 只看末尾 100 行
+tail -n 100 instock/log/stock_execute_job.log
+```
+
+### 5.2 Docker：进容器看同一批文件
+
+容器内项目路径一般为 **`/data/InStock/`**，日志在：
+
+```text
+/data/InStock/instock/log/stock_execute_job.log
+/data/InStock/instock/log/stock_web.log
+```
+
+示例：
+
+```bash
+docker exec -it InStock bash
+tail -f /data/InStock/instock/log/stock_execute_job.log
+```
+
+不进入交互 shell，也可一行输出：
+
+```bash
+docker exec InStock tail -n 80 /data/InStock/instock/log/stock_execute_job.log
+```
+
+### 5.3 自动交易（可选，多为 Windows）
+
+若运行 **`trade/trade_service.py`**（或等价入口），会写入 **`instock/log/stock_trade.log`**；部分策略还会在 **`instock/log/`** 下生成以策略名命名的日志。一般桌面 Mac/Linux 用户若不启用自动交易，可忽略。
+
+### 5.4 Docker 进程自身（排障用）
+
+- **Supervisor**：镜像内主进程日志可能在 **`/tmp/supervisord.log`**（见 `supervisor/supervisord.conf`）。  
+- **Cron**：业务仍以 **`stock_execute_job.log`** 为主；若怀疑定时任务未触发，需结合容器时间 (`TZ`) 与 Dockerfile 里 crontab 核对。
+
+---
+
+## 6. 常见问题（极简）
+
+| 现象 | 建议 |
+|------|------|
+| 9988 打不开 | 确认 Web 已启动；Docker 检查端口映射 `-p 9988:9988`。 |
+| 页面无数据 | 先跑 `basic_data_daily_job` 或 `execute_daily_job`；看 **`stock_execute_job.log`** 是否报错（数据库、网络、东方财富限流）。 |
+| 东方财富请求失败 | 配置 **`instock/config/eastmoney_cookie.txt`** 或环境变量 `EAST_MONEY_COOKIE`，见 [deployment.md](./deployment.md) 中 **「4. 东方财富 Cookie 获取与配置」**。 |
+
+---
+
+## 7. 下一步
+
+- 各 `*_daily_job.py` 功能与用法：**[jobs.md](./jobs.md)**  
+- 安装与代理、Cookie、Docker 命令：**[deployment.md](./deployment.md)**  
+- 数据源、表、定时策略、回测含义：**[architecture.md](./architecture.md)**  
+- 功能清单与批量作业原文：**[README.md](../README.md)**
