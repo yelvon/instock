@@ -83,3 +83,63 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
         except Exception as e:
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class SyncCookieApiHandler(webBase.BaseHandler, ABC):
+    """东方财富 Cookie：与 instock/config/eastmoney_cookie.txt 对应（Docker 常挂载为同一路径）。"""
+
+    def get(self):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            data = syncsvc.read_eastmoney_cookie()
+            self.write(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "path": data["path"],
+                        "content": data["content"],
+                        "bytes": data["bytes"],
+                        "exists": data["exists"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+    def post(self):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        cookie = body.get("cookie")
+        if cookie is None:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 cookie 字段"}, ensure_ascii=False))
+            return
+        if not isinstance(cookie, str):
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "cookie 须为字符串"}, ensure_ascii=False))
+            return
+        try:
+            path = syncsvc.save_eastmoney_cookie(cookie)
+            self.write(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "path": path,
+                        "message": "已写入。新触发的数据作业子进程会读取此文件。",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))

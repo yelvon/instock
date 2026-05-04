@@ -159,3 +159,8 @@ cython_debug/
 
 gf_client.json
 
+# 本地敏感配置（Cookie、代理等），勿提交
+eastmoney_cookie.txt
+proxy.txt
+*.tmp
+

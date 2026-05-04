@@ -2,7 +2,7 @@
 
 本文档补充官方 [README.md](../README.md) 中的安装说明，覆盖 **macOS 本机 Python** 与 **Docker** 两套流程，以及 **东方财富 Cookie** 的获取与配置。股市有风险，本系统仅供学习与研究。
 
-**快速上手（运行方式与看日志）**：[quick-start.md](./quick-start.md) · **作业脚本说明**：[jobs.md](./jobs.md) · **架构与数据流**：[architecture.md](./architecture.md)
+**快速上手（运行方式与看日志）**：[quick-start.md](./quick-start.md) · **Docker 运维常用命令**：[docker-ops.md](./docker-ops.md) · **作业脚本说明**：[jobs.md](./jobs.md) · **架构与数据流**：[architecture.md](./architecture.md)
 
 ---
 
@@ -128,6 +128,8 @@ README 写明：**自动交易目前主要面向 Windows**（同花顺客户端�
 
 ## 3. macOS + Docker 部署流程
 
+**Docker Compose 一键编排（推荐）**：仓库内 **`docker/docker-compose.yml`**，数据目录挂载为 **`/var/lib/mysql`**（与官方镜像一致，避免数据落入匿名卷）。常用启停、日志、备份思路见 **[docker-ops.md](./docker-ops.md)**。
+
 ### 3.1 前提条件
 
 1. 安装并启动 [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/)。
@@ -170,7 +172,7 @@ docker run -d --name InStockDbService \
   library/mariadb:latest
 ```
 
-数据持久化在 `~/instock-docker/mariadb/data`。检查状态：
+数据持久化在 `~/instock-docker/mariadb/data`（需将宿主机目录挂载到容器内 **`/var/lib/mysql`** 才是官方镜像实际数据目录；若误挂到 `/var/lib/instockdb`，数据会落在 Docker 匿名卷，见 [docker-ops.md](./docker-ops.md) 中 Compose 说明）。检查状态：
 
 ```bash
 docker ps --filter name=InStockDbService
@@ -283,7 +285,7 @@ docker network rm InStockService
 | 挂载后配置不生效 | 确认宿主机上是**文件**而非目录；修改代理或 Cookie 后**重启 InStock 容器**。 |
 | 应用连不上库 | 确认 `db_host` 与数据库容器 `--name` 一致，且两容器在同一 `docker network`。 |
 | 使用宿主机 MySQL | 将 `db_host` 设为 **`host.docker.internal`**（Docker Desktop for Mac），并正确配置 `db_user`、`db_password`、`db_database`、`db_port`；README 中 `db_host=localhost` 针对的是库与应用在同一网络命名空间内的场景。 |
-| 仓库内 `docker/docker-compose.yml` | 与 README 的手动命令在网络名、`db_host` 与卷路径上可能不完全一致；若使用 Compose，请自行统一服务名、环境变量与卷路径。`version` 字段若被提示过时，以本机 Compose 版本说明为准。 |
+| 仓库内 `docker/docker-compose.yml` | 已与 **`InStockService`** 网络、`db_host=InStockDbService`、端口 **9988 / 3306** 对齐；MariaDB 数据挂载 **`/var/lib/mysql`**。运维命令见 [docker-ops.md](./docker-ops.md)。 |
 | 自动交易 | README 写明自动交易目前**仅支持 Windows**；Mac + Docker 一般仅使用数据与 Web 功能。 |
 | **`docker logs` 出现 `is not executable`**、`run_web` **FATAL** | 未给 `instock/bin/run_web.sh` 等加执行权限，见上文 **§3.5.1**。 |
 | **更新了仓库代码但容器里仍是旧行为** | 未挂载本机目录时，仅重启容器**不会**加载宿主机修改；需 **`-v 仓库根:/data/InStock`** 或自行 **`docker build`** 新镜像，见下文 **§3.11**。 |

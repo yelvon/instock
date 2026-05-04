@@ -4,9 +4,11 @@
 
 import json
 from abc import ABC
+from decimal import Decimal
 from tornado import gen
 # import logging
 import datetime
+from pymysql.err import ProgrammingError
 import instock.lib.trade_time as trd
 import instock.core.singleton_stock_web_module_data as sswmd
 import instock.web.base as webBase
@@ -19,11 +21,11 @@ class MyEncoder(json.JSONEncoder):
 
     def default(self, obj):
         if isinstance(obj, bytes):
-            return "是" if ord(obj) == 1 else "否"
+            return "是" if (len(obj) == 1 and ord(obj) == 1) else "否"
+        elif isinstance(obj, Decimal):
+            return float(obj)
         elif isinstance(obj, datetime.date):
-            delta = datetime.datetime.combine(obj, datetime.time.min) - datetime.datetime(1899, 12, 30)
-            return f'/OADate({float(delta.days) + (float(delta.seconds) / 86400)})/'  # 86,400 seconds in day
-            # return obj.isoformat()
+            return obj.isoformat()
         else:
             return json.JSONEncoder.default(self, obj)
 
@@ -39,8 +41,12 @@ class GetStockHtmlHandler(webBase.BaseHandler, ABC):
             date_now_str = run_date_nph.strftime("%Y-%m-%d")
         else:
             date_now_str = run_date.strftime("%Y-%m-%d")
-        self.render("stock_web.html", web_module_data=web_module_data, date_now=date_now_str,
-                    leftMenu=webBase.GetLeftMenu(self.request.uri))
+        self.render(
+            "stock_web.html",
+            web_module_data=web_module_data,
+            date_now=date_now_str,
+            leftMenu=webBase.GetLeftMenu(self.request.uri),
+        )
 
 
 # 获得股票数据内容。
@@ -49,12 +55,11 @@ class GetStockDataHandler(webBase.BaseHandler, ABC):
         name = self.get_argument("name", default=None, strip=False)
         date = self.get_argument("date", default=None, strip=False)
         web_module_data = sswmd.stock_web_module_data().get_data(name)
-        self.set_header('Content-Type', 'application/json;charset=UTF-8')
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
 
         if date is None:
             where = ""
         else:
-            # where = f" WHERE `date` = '{date}'"
             where = f" WHERE `date` = %s"
 
         order_by = ""
@@ -66,6 +71,21 @@ class GetStockDataHandler(webBase.BaseHandler, ABC):
             order_columns = f",{web_module_data.order_columns}"
 
         sql = f" SELECT *{order_columns} FROM `{web_module_data.table_name}`{where}{order_by}"
-        data = self.db.query(sql,date)
+        try:
+            data = self.db.query(sql, date)
+        except ProgrammingError as e:
+            if e.args and e.args[0] == 1146:
+                self.set_status(404)
+                self.write(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "数据表尚未创建（历史上若当日无行情数据则不会自动建表）。请执行「每日快照」作业或 Web「数据同步」，或：python3 instock/job/basic_data_daily_job.py。",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return
+            raise
 
         self.write(json.dumps(data, cls=MyEncoder))

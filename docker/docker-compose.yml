@@ -1,31 +1,53 @@
-version: '4.0.0'
+# InStock + MariaDB：一键编排
+#
+# 快速开始（与 docs/deployment.md §3.2 一致）：
+#   mkdir -p ~/instock-docker/mariadb/data
+#   touch ~/instock-docker/instockproxy.txt ~/instock-docker/eastmoneycookie.txt
+#   cd 本目录 && docker compose up -d
+#
+# 可选：cp .env.example .env ，用绝对路径覆盖默认的 ~/instock-docker
+#
+# 说明：MariaDB 数据目录必须为 /var/lib/mysql；勿再挂到 /var/lib/instockdb，否则数据会进匿名卷。
+# 网络名 InStockService、容器名与 deployment.md 中 docker run 示例一致。
 
 services:
   instockdbservice:
-    image: library/mariadb:latest
+    image: mariadb:latest
     container_name: InStockDbService
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+    ports:
+      - "${MARIADB_HOST_PORT:-3306}:3306"
     volumes:
-      - /data/mariadb/data:/var/lib/instockdb
+      # 默认：宿主机 ~/instock-docker/mariadb/data；可通过 .env 中 INSTOCK_MARIADB_DATA 覆盖
+      - ${INSTOCK_MARIADB_DATA:-${HOME}/instock-docker/mariadb/data}:/var/lib/mysql
     networks:
-      - instock_network
+      - instock_net
 
   instock:
     image: mayanghua/instock:latest
     container_name: InStock
+    restart: unless-stopped
+    depends_on:
+      - instockdbservice
     ports:
       - "9988:9988"
     environment:
       db_host: InStockDbService
+      db_user: ${DB_USER:-root}
+      db_password: ${DB_PASSWORD:-root}
+      db_database: ${DB_DATABASE:-instockdb}
+      db_port: ${DB_PORT:-3306}
     volumes:
-      - /data/instockproxy.txt:/data/InStock/instock/config/proxy.txt
-    depends_on:
-      - instockdbservice
+      - ${INSTOCK_PROXY_FILE:-${HOME}/instock-docker/instockproxy.txt}:/data/InStock/instock/config/proxy.txt
+      - ${INSTOCK_COOKIE_FILE:-${HOME}/instock-docker/eastmoneycookie.txt}:/data/InStock/instock/config/eastmoney_cookie.txt
     networks:
-      - instock_network
+      - instock_net
+    # Apple Silicon 若运行异常，可取消下行注释
+    # platform: linux/amd64
 
 networks:
-  instock_network:
+  instock_net:
+    name: InStockService
     driver: bridge
-

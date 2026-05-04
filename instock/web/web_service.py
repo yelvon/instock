@@ -53,6 +53,7 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/runs", syncJobHandler.SyncRunsApiHandler),
             (r"/instock/api/sync/run_detail", syncJobHandler.SyncRunDetailApiHandler),
             (r"/instock/api/sync/trigger", syncJobHandler.SyncRunPostHandler),
+            (r"/instock/api/sync/cookie", syncJobHandler.SyncCookieApiHandler),
         ]
         settings = dict(  # 配置
             template_path=os.path.join(os.path.dirname(__file__), "templates"),

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import uuid
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -21,18 +22,108 @@ _LOCK = threading.Lock()
 _RUNS: Dict[str, Dict[str, Any]] = {}
 _ORDER: List[str] = []
 _MAX_RUNS = 200
+_COOKIE_MAX_BYTES = 65536
+
+
+def cookie_file_path() -> str:
+    return os.path.join(_REPO_ROOT, "instock", "config", "eastmoney_cookie.txt")
+
+
+def read_eastmoney_cookie() -> Dict[str, Any]:
+    path = cookie_file_path()
+    if not os.path.isfile(path):
+        return {"path": path, "content": "", "bytes": 0, "exists": False}
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    b = len(text.encode("utf-8"))
+    return {"path": path, "content": text, "bytes": b, "exists": True}
+
+
+def save_eastmoney_cookie(content: str) -> str:
+    raw = (content or "").replace("\r\n", "\n").strip()
+    enc = raw.encode("utf-8")
+    if len(enc) > _COOKIE_MAX_BYTES:
+        raise ValueError(f"Cookie 过长（>{_COOKIE_MAX_BYTES} 字节）")
+    path = cookie_file_path()
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(raw)
+    return path
+
 
 JOB_ITEMS: List[Dict[str, str]] = [
-    {"id": "execute_daily_job", "script": "execute_daily_job.py", "title": "整体日作业", "hint": "串联 init / 基础 / 综合选股 / 其它 / 盘后（见源码注释）"},
-    {"id": "init_job", "script": "init_job.py", "title": "初始化数据库", "hint": "仅创建库与基础表；一般只需参数「默认（当前交易日逻辑）」"},
-    {"id": "basic_data_daily_job", "script": "basic_data_daily_job.py", "title": "股票/ETF 快照", "hint": "cn_stock_spot、cn_etf_spot"},
-    {"id": "selection_data_daily_job", "script": "selection_data_daily_job.py", "title": "综合选股", "hint": "cn_stock_selection"},
-    {"id": "basic_data_other_daily_job", "script": "basic_data_other_daily_job.py", "title": "其它基础数据", "hint": "龙虎榜、资金流、分红、抢筹、涨停原因等"},
-    {"id": "basic_data_after_close_daily_job", "script": "basic_data_after_close_daily_job.py", "title": "盘后数据", "hint": "大宗交易、尾盘抢筹"},
-    {"id": "indicators_data_daily_job", "script": "indicators_data_daily_job.py", "title": "技术指标", "hint": "指标表 + 买卖信号表，耗时长"},
-    {"id": "klinepattern_data_daily_job", "script": "klinepattern_data_daily_job.py", "title": "K 线形态", "hint": "cn_stock_pattern"},
-    {"id": "strategy_data_daily_job", "script": "strategy_data_daily_job.py", "title": "策略选股", "hint": "各 cn_stock_strategy_* 表"},
-    {"id": "backtest_data_daily_job", "script": "backtest_data_daily_job.py", "title": "信号事后收益统计", "hint": "依赖指标/策略已有数据"},
+    {
+        "id": "execute_daily_job",
+        "script": "execute_daily_job.py",
+        "title": "整体日作业",
+        "hint": "按固定顺序跑完当日主流程",
+        "description": "总控任务：依次执行 init → 基础快照 → 综合选股 →（并行）其它基础数据 → 盘后数据等，对应 execute_daily_job.py 源码顺序。适合「一键补全天流水线」。注意源码里指标/K 线/策略/事后统计可能被注释，需要时请单独跑单项作业。",
+    },
+    {
+        "id": "init_job",
+        "script": "init_job.py",
+        "title": "初始化数据库",
+        "hint": "建库、关注表等基础结构",
+        "description": "首次部署或换库时执行：CREATE DATABASE（若不存在）、创建关注表等最小表结构。不涉及行情抓取；仅需日期模式选「默认」。",
+    },
+    {
+        "id": "basic_data_daily_job",
+        "script": "basic_data_daily_job.py",
+        "title": "股票/ETF 快照",
+        "hint": "全市场当日报价快照",
+        "description": "抓取当日 A 股全市场快照与 ETF 快照，写入 cn_stock_spot、cn_etf_spot，是多数模块的数据底座。盘中可多次更新；选择交易日日期运行。",
+    },
+    {
+        "id": "selection_data_daily_job",
+        "script": "selection_data_daily_job.py",
+        "title": "综合选股",
+        "hint": "东财选股器类结果",
+        "description": "按东方财富「综合选股」类接口写入 cn_stock_selection，用于页面「综合选股」等展示。依赖接口与 Cookie/网络环境。",
+    },
+    {
+        "id": "basic_data_other_daily_job",
+        "script": "basic_data_other_daily_job.py",
+        "title": "其它基础数据",
+        "hint": "龙虎榜、资金流、涨停原因等",
+        "description": "一批扩展基础数据：龙虎榜统计、分红配送、个股/行业/概念资金流、早盘抢筹、涨停原因等（详见 jobs.md）。建议先有当日快照 cn_stock_spot 再跑，耗时可较长。",
+    },
+    {
+        "id": "basic_data_after_close_daily_job",
+        "script": "basic_data_after_close_daily_job.py",
+        "title": "盘后数据",
+        "hint": "收盘后才完整的数据",
+        "description": "收盘后更完整的数据流，如大宗交易、尾盘抢筹等（以源码为准）。请在收盘后或晚间运行对应日期。",
+    },
+    {
+        "id": "indicators_data_daily_job",
+        "script": "indicators_data_daily_job.py",
+        "title": "技术指标",
+        "hint": "指标与买卖信号表",
+        "description": "计算技术指标并写入指标相关表及买卖信号表，运行时间通常较长。需已有足够历史 K 线等基础数据。",
+    },
+    {
+        "id": "klinepattern_data_daily_job",
+        "script": "klinepattern_data_daily_job.py",
+        "title": "K 线形态",
+        "hint": "Talib 形态写入 cn_stock_pattern",
+        "description": "基于 K 线计算形态（如 Talib），结果写入 cn_stock_pattern。依赖历史行情已入库。",
+    },
+    {
+        "id": "strategy_data_daily_job",
+        "script": "strategy_data_daily_job.py",
+        "title": "策略选股",
+        "hint": "各策略表 cn_stock_strategy_*",
+        "description": "按 tablestructure 中注册的策略函数逐策略跑批，写入各 cn_stock_strategy_* 表。需指标等前置数据按策略而定。",
+    },
+    {
+        "id": "backtest_data_daily_job",
+        "script": "backtest_data_daily_job.py",
+        "title": "信号事后收益统计",
+        "hint": "信号日后 N 日涨跌统计",
+        "description": "对已有买卖信号与策略信号做「事后收益率」统计（非撮合级回测），写入表中带 RATE 扩展列。需先有信号日与历史收盘价数据。",
+    },
 ]
 
 
@@ -130,31 +221,55 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
 
 
 def _worker(run_id: str) -> None:
-    with _LOCK:
-        run = _RUNS.get(run_id)
+    run = _RUNS.get(run_id)
     if not run:
         return
     env = os.environ.copy()
     env["PYTHONPATH"] = _REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    cmd = run["command"]
+    env["PYTHONUNBUFFERED"] = "1"
+    cmd = list(run["command"])
+    if cmd and cmd[0] == sys.executable and (len(cmd) < 2 or cmd[1] != "-u"):
+        cmd.insert(1, "-u")
     proc = None
-    out, err = "", ""
+    merged_out = ""
     code = -1
+    last_persist = 0.0
+    start_exc: Optional[Exception] = None
     try:
         proc = subprocess.Popen(
             cmd,
             cwd=_REPO_ROOT,
             env=env,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            bufsize=0,
+            bufsize=1,
         )
-        out, err = proc.communicate()
-        code = proc.returncode if proc.returncode is not None else -1
+        assert proc.stdout is not None
+        while True:
+            chunk = proc.stdout.read(8192)
+            if not chunk:
+                break
+            merged_out += chunk
+            if len(merged_out) > 8_000_000:
+                merged_out = merged_out[-6_000_000:]
+            now = time.time()
+            with _LOCK:
+                r = _RUNS.get(run_id)
+                if r:
+                    r["stdout_tail"] = _truncate(merged_out)
+                    r["progress_bytes"] = len(merged_out)
+                    r["progress_lines"] = merged_out.count("\n")
+            if now - last_persist > 2.0:
+                last_persist = now
+                _persist()
+        code = proc.wait()
+        if code is None:
+            code = -1
     except Exception as e:
-        out, err = "", str(e)
+        start_exc = e
+        merged_out += "\n[exception] " + str(e)
         code = -1
     with _LOCK:
         r = _RUNS.get(run_id)
@@ -162,10 +277,16 @@ def _worker(run_id: str) -> None:
             r["finished_at"] = datetime.now().isoformat(timespec="seconds")
             r["exit_code"] = code
             r["status"] = "success" if code == 0 else "failed"
-            r["stdout_tail"] = _truncate(out or "")
-            r["stderr_tail"] = _truncate(err or "")
-            if proc is None:
-                r["error_message"] = err or "进程启动失败"
+            r["stdout_tail"] = _truncate(merged_out or "")
+            r["stderr_tail"] = ""
+            r["progress_bytes"] = len(merged_out or "")
+            r["progress_lines"] = (merged_out or "").count("\n")
+            if proc is None and start_exc is not None:
+                r["error_message"] = str(start_exc)
+            elif proc is None:
+                r["error_message"] = "进程启动失败"
+            else:
+                r["error_message"] = None
     _persist()
 
 
@@ -192,6 +313,8 @@ def start_job(
         "stdout_tail": "",
         "stderr_tail": "",
         "error_message": None,
+        "progress_bytes": 0,
+        "progress_lines": 0,
     }
     with _LOCK:
         _RUNS[run_id] = rec
