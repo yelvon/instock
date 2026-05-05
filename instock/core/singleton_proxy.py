@@ -23,7 +23,7 @@ class proxys(metaclass=singleton_type):
             with open(proxy_filename, "r") as file:
                 self.data = list(set(line.strip() for line in file.readlines() if line.strip()))
         except Exception:
-           pass
+            self.data = []
 
     def get_data(self):
         return self.data

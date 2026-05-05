@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import uuid
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 _max_output_chars = 48000
 
@@ -143,6 +144,25 @@ def _truncate(s: str) -> str:
     return "...[truncated]\n" + s[-_max_output_chars:]
 
 
+_ERR_PAT = re.compile(
+    r"处理异常|Traceback|ERROR|Error:|Exception:|CRITICAL|致命|失败\[",
+    re.IGNORECASE,
+)
+
+
+def _progress_meta(merged_out: str) -> Tuple[int, int, int, str]:
+    """从子进程累计输出估算：字节数、行数、疑似报错行数、最近若干条报错相关行。"""
+    if not merged_out:
+        return 0, 0, 0, ""
+    lines = merged_out.split("\n")
+    nlines = len(lines)
+    nbytes = len(merged_out.encode("utf-8"))
+    hit_lines = [ln for ln in lines if _ERR_PAT.search(ln)]
+    err_count = len(hit_lines)
+    tail_err = "\n".join(hit_lines[-12:]) if hit_lines else ""
+    return nbytes, nlines, err_count, tail_err
+
+
 def _load() -> None:
     global _RUNS, _ORDER
     if not os.path.isfile(_HISTORY_PATH):
@@ -154,6 +174,11 @@ def _load() -> None:
             for item in data:
                 rid = item.get("id")
                 if rid:
+                    item.setdefault("error_line_count", 0)
+                    item.setdefault("last_errors_tail", "")
+                    item.setdefault("date_start", "")
+                    item.setdefault("date_end", "")
+                    item.setdefault("date_list", "")
                     _RUNS[rid] = item
                     _ORDER.append(rid)
     except Exception:
@@ -189,6 +214,32 @@ def list_runs(limit: int = 100) -> List[Dict[str, Any]]:
 def get_run(run_id: str) -> Optional[Dict[str, Any]]:
     with _LOCK:
         return _RUNS.get(run_id)
+
+
+def delete_run(run_id: str) -> bool:
+    with _LOCK:
+        if run_id not in _RUNS:
+            return False
+        del _RUNS[run_id]
+        try:
+            _ORDER.remove(run_id)
+        except ValueError:
+            pass
+    _persist()
+    return True
+
+
+def retry_from_run(run_id: str) -> Dict[str, Any]:
+    old = get_run(run_id)
+    if not old:
+        raise ValueError("记录不存在")
+    return start_job(
+        old["job_id"],
+        date_mode=old.get("date_mode") or "default",
+        date_start=old.get("date_start") or "",
+        date_end=old.get("date_end") or "",
+        date_list=old.get("date_list") or "",
+    )
 
 
 def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, date_list: str) -> List[str]:
@@ -255,12 +306,15 @@ def _worker(run_id: str) -> None:
             if len(merged_out) > 8_000_000:
                 merged_out = merged_out[-6_000_000:]
             now = time.time()
+            nbytes, nlines, err_cnt, err_tail = _progress_meta(merged_out)
             with _LOCK:
                 r = _RUNS.get(run_id)
                 if r:
                     r["stdout_tail"] = _truncate(merged_out)
-                    r["progress_bytes"] = len(merged_out)
-                    r["progress_lines"] = merged_out.count("\n")
+                    r["progress_bytes"] = nbytes
+                    r["progress_lines"] = nlines
+                    r["error_line_count"] = err_cnt
+                    r["last_errors_tail"] = err_tail[-6000:] if err_tail else ""
             if now - last_persist > 2.0:
                 last_persist = now
                 _persist()
@@ -271,20 +325,30 @@ def _worker(run_id: str) -> None:
         start_exc = e
         merged_out += "\n[exception] " + str(e)
         code = -1
+    mo = merged_out or ""
+    nbytes, nlines, err_cnt, err_tail = _progress_meta(mo)
     with _LOCK:
         r = _RUNS.get(run_id)
         if r:
             r["finished_at"] = datetime.now().isoformat(timespec="seconds")
             r["exit_code"] = code
             r["status"] = "success" if code == 0 else "failed"
-            r["stdout_tail"] = _truncate(merged_out or "")
+            r["stdout_tail"] = _truncate(mo)
             r["stderr_tail"] = ""
-            r["progress_bytes"] = len(merged_out or "")
-            r["progress_lines"] = (merged_out or "").count("\n")
+            r["progress_bytes"] = nbytes
+            r["progress_lines"] = nlines
+            r["error_line_count"] = err_cnt
+            r["last_errors_tail"] = (err_tail[-6000:] if err_tail else "")
             if proc is None and start_exc is not None:
                 r["error_message"] = str(start_exc)
             elif proc is None:
                 r["error_message"] = "进程启动失败"
+            elif code != 0:
+                hint = r.get("last_errors_tail") or ""
+                if not hint.strip():
+                    tail_lines = mo.split("\n")[-25:]
+                    hint = "\n".join(tail_lines)
+                r["error_message"] = (hint.strip()[:4000] if hint.strip() else "非零退出码，请查看完整输出")
             else:
                 r["error_message"] = None
     _persist()
@@ -310,11 +374,16 @@ def start_job(
         "finished_at": None,
         "command": cmd,
         "date_mode": date_mode,
+        "date_start": date_start,
+        "date_end": date_end,
+        "date_list": date_list,
         "stdout_tail": "",
         "stderr_tail": "",
         "error_message": None,
         "progress_bytes": 0,
         "progress_lines": 0,
+        "error_line_count": 0,
+        "last_errors_tail": "",
     }
     with _LOCK:
         _RUNS[run_id] = rec

@@ -85,6 +85,54 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 
 
+class SyncRetryHandler(webBase.BaseHandler, ABC):
+    def post(self):
+        syncsvc.init_history()
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        run_id = (body.get("run_id") or "").strip()
+        if not run_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 run_id"}, ensure_ascii=False))
+            return
+        try:
+            rec = syncsvc.retry_from_run(run_id)
+            self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class SyncDeleteRunHandler(webBase.BaseHandler, ABC):
+    def post(self):
+        syncsvc.init_history()
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        run_id = (body.get("id") or body.get("run_id") or "").strip()
+        if not run_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
+            return
+        if syncsvc.delete_run(run_id):
+            self.write(json.dumps({"ok": True}, ensure_ascii=False))
+        else:
+            self.set_status(404)
+            self.write(json.dumps({"ok": False, "error": "记录不存在"}, ensure_ascii=False))
+
+
 class SyncCookieApiHandler(webBase.BaseHandler, ABC):
     """东方财富 Cookie：与 instock/config/eastmoney_cookie.txt 对应（Docker 常挂载为同一路径）。"""
 

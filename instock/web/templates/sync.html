@@ -58,18 +58,23 @@
                 <div class="progress-bar progress-bar-info progress-bar-striped active" role="progressbar" id="syncProgressBar" style="width:100%">运行中…</div>
             </div>
             <div class="text-muted" id="syncProgressText" style="font-size:12px;line-height:1.6;"></div>
+            <div id="syncErrorWrap" style="display:none; margin-top:10px;">
+                <strong style="font-size:12px;color:#a94442;">日志中的异常相关行（实时）</strong>
+                <pre id="syncLiveErrors" style="max-height:120px; overflow:auto; background:#fff5f5; padding:8px; font-size:11px; white-space:pre-wrap; border:1px solid #ebccd1;"></pre>
+            </div>
             <div style="margin-top:8px;"><strong style="font-size:12px;">实时输出尾部</strong></div>
             <pre id="syncLiveOut" style="max-height:140px; overflow:auto; background:#f8f9fa; padding:8px; font-size:11px; white-space:pre-wrap; border:1px solid #e7e7e7;"></pre>
         </div>
     </div>
 
     <h4>执行记录 <button type="button" class="btn btn-sm btn-default" id="btnRefresh">刷新</button></h4>
-    <div class="table-responsive" style="max-height: 280px; overflow: auto; border: 1px solid #ddd;">
+    <div class="table-responsive" style="max-height: 320px; overflow: auto; border: 1px solid #ddd;">
         <table class="table table-striped table-bordered table-condensed" style="margin-bottom:0;">
             <thead>
                 <tr>
                     <th>开始时间</th>
                     <th>作业</th>
+                    <th>选择条件</th>
                     <th>状态</th>
                     <th>进度</th>
                     <th>退出码</th>
@@ -82,6 +87,10 @@
     </div>
 
     <h4 style="margin-top:16px;">输出详情 <span id="detailId" class="text-muted" style="font-size:12px;"></span></h4>
+    <div style="margin-bottom:12px;">
+        <div><strong>错误摘要与异常线索</strong> <span class="text-muted" style="font-size:11px;">（退出失败时的摘要 + 日志中匹配到的异常相关行）</span></div>
+        <pre id="detailErrCombined" style="max-height:180px; overflow:auto; background:#fdf2f2; padding:8px; font-size:11px; white-space:pre-wrap; border:1px solid #ebccd1;"></pre>
+    </div>
     <div class="row">
         <div class="col-sm-6">
             <div><strong>stdout 尾部</strong></div>
@@ -99,6 +108,8 @@
     const jobsUrl = '/instock/api/sync/jobs';
     const runsUrl = '/instock/api/sync/runs';
     const postUrl = '/instock/api/sync/trigger';
+    const retryUrl = '/instock/api/sync/retry';
+    const deleteRunUrl = '/instock/api/sync/delete_run';
     const detailUrl = '/instock/api/sync/run_detail';
     const cookieUrl = '/instock/api/sync/cookie';
 
@@ -173,7 +184,41 @@
         if (r.status !== 'running') return '-';
         const b = r.progress_bytes != null ? r.progress_bytes : 0;
         const ln = r.progress_lines != null ? r.progress_lines : 0;
-        return esc(String(b)) + ' B · ' + esc(String(ln)) + ' 行';
+        const ec = r.error_line_count != null ? r.error_line_count : 0;
+        return esc(String(b)) + ' B · ' + esc(String(ln)) + ' 行 · 异常行≈' + esc(String(ec));
+    }
+
+    function combinedErrorsText(r) {
+        const parts = [];
+        if (r.error_message) {
+            parts.push('【退出摘要】\n' + String(r.error_message));
+        }
+        const tail = r.last_errors_tail;
+        if (tail && String(tail).trim()) {
+            parts.push('【日志异常相关行】\n' + String(tail));
+        }
+        return parts.length ? parts.join('\n\n') : '（无）';
+    }
+
+    /** 与触发时 payload 一致：date_mode + 日期参数（历史记录可能缺字段，已 setdefault 由后端补） */
+    function formatRunConditions(r) {
+        if (r.job_id === 'init_job') {
+            return '默认（初始化忽略日期）';
+        }
+        const dm = String(r.date_mode || 'default').toLowerCase();
+        if (dm === 'default') {
+            return '默认';
+        }
+        if (dm === 'list') {
+            const dl = (r.date_list || '').trim();
+            return dl ? ('枚举：' + dl) : '枚举：（未填）';
+        }
+        if (dm === 'range') {
+            const ds = (r.date_start || '').trim();
+            const de = (r.date_end || '').trim();
+            return '区间：' + (ds || '—') + ' ~ ' + (de || '—');
+        }
+        return '模式：' + dm;
     }
 
     function stopPoll() {
@@ -192,7 +237,8 @@
         const sec = elapsedSeconds(r.started_at);
         const b = r.progress_bytes != null ? r.progress_bytes : 0;
         const ln = r.progress_lines != null ? r.progress_lines : 0;
-        let txt = '已运行约 <strong>' + sec + '</strong> 秒 · 已采集输出 <strong>' + b + '</strong> 字节 · <strong>' + ln + '</strong> 行（日志持续增长表示仍在执行）';
+        const ec = r.error_line_count != null ? r.error_line_count : 0;
+        let txt = '已运行约 <strong>' + sec + '</strong> 秒 · 输出 <strong>' + b + '</strong> 字节 · <strong>' + ln + '</strong> 行 · 疑似异常相关行 <strong>' + ec + '</strong> 条（持续增长表示仍在执行）';
         if (r.status === 'running') {
             bar.removeClass('progress-bar-success progress-bar-danger').addClass('progress-bar-info active progress-bar-striped').text('运行中…').css('width', '100%');
         } else if (r.status === 'success') {
@@ -200,9 +246,17 @@
             txt = '已完成 · 耗时约 <strong>' + sec + '</strong> 秒 · 输出 <strong>' + b + '</strong> 字节 · <strong>' + ln + '</strong> 行 · 退出码 <strong>' + esc(String(r.exit_code)) + '</strong>';
         } else if (r.status === 'failed') {
             bar.removeClass('progress-bar-info active progress-bar-striped progress-bar-success').addClass('progress-bar-danger').text('失败').css('width', '100%');
-            txt = '失败 · 退出码 <strong>' + esc(String(r.exit_code)) + '</strong> · 输出 <strong>' + b + '</strong> 字节。详见下方 stderr / 详情。';
+            txt = '失败 · 退出码 <strong>' + esc(String(r.exit_code)) + '</strong> · 输出 <strong>' + b + '</strong> 字节 · 异常相关行 <strong>' + ec + '</strong> 条。下方红色区域与「输出详情」可查看原因。';
         }
         $('#syncProgressText').html(txt);
+        const errTail = (r.last_errors_tail && String(r.last_errors_tail).trim()) ? r.last_errors_tail : '';
+        if (errTail && (r.status === 'running' || r.status === 'failed')) {
+            $('#syncErrorWrap').show();
+            $('#syncLiveErrors').text(errTail);
+        } else {
+            $('#syncErrorWrap').hide();
+            $('#syncLiveErrors').text('');
+        }
         $('#syncLiveOut').text(r.stdout_tail || '');
     }
 
@@ -215,7 +269,9 @@
                 stopPoll();
                 loadRuns();
                 showDetail(trackingRunId);
-                $('#syncProgressPanel').delay(4000).fadeOut(400);
+                if (res.run.status === 'success') {
+                    $('#syncProgressPanel').delay(5000).fadeOut(400);
+                }
             }
         });
     }
@@ -224,6 +280,8 @@
         stopPoll();
         trackingRunId = runId;
         $('#syncProgressPanel').stop(true, true).show();
+        $('#syncErrorWrap').hide();
+        $('#syncLiveErrors').text('');
         $('#syncLiveOut').text('');
         $('#syncProgressBar').removeClass('progress-bar-success progress-bar-danger').addClass('progress-bar-info progress-bar-striped active').text('运行中…').css('width', '100%');
         $('#syncProgressText').html('');
@@ -240,13 +298,84 @@
                 const tr = $('<tr></tr>');
                 tr.append($('<td></td>').text(r.started_at || ''));
                 tr.append($('<td></td>').text(r.label || r.job_id || ''));
+                const condText = formatRunConditions(r);
+                tr.append(
+                    $('<td></td>')
+                        .css({ fontSize: '11px', wordBreak: 'break-all', maxWidth: '260px', verticalAlign: 'middle' })
+                        .text(condText)
+                        .attr('title', condText)
+                );
                 tr.append($('<td></td>').html(statusBadge(r.status)));
                 tr.append($('<td></td>').html(progressSummary(r)));
                 tr.append($('<td></td>').text(r.exit_code == null ? '-' : r.exit_code));
                 tr.append($('<td></td>').text(r.finished_at || '-'));
-                const op = $('<button class="btn btn-xs btn-default">查看输出</button>');
-                op.on('click', function () { showDetail(r.id); });
-                tr.append($('<td></td>').append(op));
+                const tdOp = $('<td></td>');
+                const btnView = $('<button type="button" class="btn btn-xs btn-default">查看</button>');
+                btnView.on('click', function () { showDetail(r.id); });
+                const btnRetry = $('<button type="button" class="btn btn-xs btn-primary" style="margin-left:4px;">重试</button>');
+                btnRetry.on('click', function () {
+                    $('#runMsg').text('正在重试…');
+                    $.ajax({
+                        url: retryUrl,
+                        method: 'POST',
+                        contentType: 'application/json; charset=UTF-8',
+                        data: JSON.stringify({ run_id: r.id }),
+                        success: function (res2) {
+                            if (res2.ok && res2.run) {
+                                $('#runMsg').text('已启动重试：' + res2.run.id);
+                                startTracking(res2.run.id);
+                                loadRuns();
+                                showDetail(res2.run.id);
+                            } else {
+                                $('#runMsg').text(res2.error || '重试失败');
+                            }
+                        },
+                        error: function (xhr) {
+                            let msg = '重试请求失败';
+                            try {
+                                const j = JSON.parse(xhr.responseText);
+                                if (j.error) msg = j.error;
+                            } catch (e) {}
+                            $('#runMsg').text(msg);
+                        }
+                    });
+                });
+                const btnDel = $('<button type="button" class="btn btn-xs btn-danger" style="margin-left:4px;">删除</button>');
+                btnDel.on('click', function () {
+                    if (!window.confirm('确定删除这条同步记录？不可恢复。')) return;
+                    $.ajax({
+                        url: deleteRunUrl,
+                        method: 'POST',
+                        contentType: 'application/json; charset=UTF-8',
+                        data: JSON.stringify({ id: r.id }),
+                        success: function (res2) {
+                            if (res2.ok) {
+                                if (trackingRunId === r.id) {
+                                    stopPoll();
+                                    $('#syncProgressPanel').hide();
+                                }
+                                $('#detailId').text('');
+                                $('#detailErrCombined').text('');
+                                $('#outPre').text('');
+                                $('#errPre').text('');
+                                loadRuns();
+                                $('#runMsg').text('已删除记录');
+                            } else {
+                                $('#runMsg').text(res2.error || '删除失败');
+                            }
+                        },
+                        error: function (xhr) {
+                            let msg = '删除失败';
+                            try {
+                                const j = JSON.parse(xhr.responseText);
+                                if (j.error) msg = j.error;
+                            } catch (e) {}
+                            $('#runMsg').text(msg);
+                        }
+                    });
+                });
+                tdOp.append(btnView, btnRetry, btnDel);
+                tr.append(tdOp);
                 tb.append(tr);
             });
             const running = res.runs.filter(function (x) { return x.status === 'running'; });
@@ -263,13 +392,15 @@
         $('#detailId').text('id: ' + id);
         $.getJSON(detailUrl + '?id=' + encodeURIComponent(id), function (res) {
             if (!res.ok) {
+                $('#detailErrCombined').text('');
                 $('#outPre').text(res.error || '');
                 $('#errPre').text('');
                 return;
             }
             const r = res.run;
+            $('#detailErrCombined').text(combinedErrorsText(r));
             $('#outPre').text(r.stdout_tail || '');
-            $('#errPre').text(r.stderr_tail || (r.error_message || ''));
+            $('#errPre').text(r.stderr_tail || '');
         });
     }
 

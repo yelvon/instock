@@ -132,6 +132,10 @@ HTTP 请求经 **`eastmoney_fetcher`**（`instock/core/eastmoney_fetcher.py`）�
 - 选股策略列表 **`TABLE_CN_STOCK_STRATEGIES`**：表名、中文名、**策略函数引用**。
 - K 线形态列与 Talib 函数映射、指标扩展列等。
 
+**完整列清单（自动生成）**：见 [`database-schema.md`](./database-schema.md)；修改 `tablestructure.py` 后在 `instock` 目录执行 `PYTHONPATH=. python3 scripts/gen_database_schema_doc.py` 更新该文档。
+
+**数据覆盖与缺失日（实施计划，仓库内维护）**：见 [`data-coverage-plan.md`](./data-coverage-plan.md)。
+
 Web 左侧菜单与数据模块来自 **`singleton_stock_web_module_data.py`**，内部组装 `web_module_data`，指定 `table_name`、列、排序、是否「实时」模块等。
 
 ### 5.3 主要数据类别（与表对应）

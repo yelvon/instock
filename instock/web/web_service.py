@@ -53,6 +53,8 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/runs", syncJobHandler.SyncRunsApiHandler),
             (r"/instock/api/sync/run_detail", syncJobHandler.SyncRunDetailApiHandler),
             (r"/instock/api/sync/trigger", syncJobHandler.SyncRunPostHandler),
+            (r"/instock/api/sync/retry", syncJobHandler.SyncRetryHandler),
+            (r"/instock/api/sync/delete_run", syncJobHandler.SyncDeleteRunHandler),
             (r"/instock/api/sync/cookie", syncJobHandler.SyncCookieApiHandler),
         ]
         settings = dict(  # 配置

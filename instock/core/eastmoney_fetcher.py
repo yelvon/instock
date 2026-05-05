@@ -75,12 +75,15 @@ class eastmoney_fetcher:
             'Referer': 'https://quote.eastmoney.com/',
             'Accept': '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            # 勿声明 br/zstd：未装 brotli 时服务端若返回 br，正文无法解压，r.json() 会报 Expecting value
+            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
         }
+        ck = self._get_cookie()
+        if ck:
+            # 必须写在 headers 里：cookies.update({'Cookie': ...}) 会变成名为 Cookie 的单条 cookie，服务端认不出来
+            headers["Cookie"] = ck
         session.headers.update(headers)
-        # 设置Cookie
-        session.cookies.update({'Cookie': self._get_cookie()})
         return session
 
     def make_request(self, url, params=None, retry=3, timeout=10):
@@ -142,8 +145,6 @@ class eastmoney_fetcher:
                     raise
 
     def update_cookie(self, new_cookie):
-        """
-        更新Cookie
-        :param new_cookie: 新的Cookie值
-        """
-        self.session.cookies.update({'Cookie': new_cookie})
+        """更新 Cookie（与浏览器 DevTools 中整段 Cookie 字符串一致）。"""
+        if new_cookie:
+            self.session.headers["Cookie"] = new_cookie
