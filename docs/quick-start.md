@@ -1,6 +1,6 @@
 # InStock 快速开始
 
-用最短步骤把系统跑起来、拉一天数据、打开网页；文末说明**日志文件在哪、怎么看**。详细安装与环境排障见 [deployment.md](./deployment.md)，整体设计见 [architecture.md](./architecture.md)。
+用最短步骤把系统跑起来、拉一天数据、打开网页；文末说明**日志文件在哪、怎么看**。**命令速查**见 [deploy-cheatsheet.md](./deploy-cheatsheet.md)；详细安装与环境排障见 [deployment.md](./deployment.md)，整体设计见 [architecture.md](./architecture.md)。
 
 **声明**：股市有风险，本项目仅供学习与研究。
 

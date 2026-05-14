@@ -2,7 +2,7 @@
 
 本文档补充官方 [README.md](../README.md) 中的安装说明，覆盖 **macOS 本机 Python** 与 **Docker** 两套流程，以及 **东方财富 Cookie** 的获取与配置。股市有风险，本系统仅供学习与研究。
 
-**快速上手（运行方式与看日志）**：[quick-start.md](./quick-start.md) · **Docker 运维常用命令**：[docker-ops.md](./docker-ops.md) · **作业脚本说明**：[jobs.md](./jobs.md) · **架构与数据流**：[architecture.md](./architecture.md)
+**部署命令速查（精简）**：[deploy-cheatsheet.md](./deploy-cheatsheet.md) · **快速上手（运行方式与看日志）**：[quick-start.md](./quick-start.md) · **Docker 运维常用命令**：[docker-ops.md](./docker-ops.md) · **作业脚本说明**：[jobs.md](./jobs.md) · **架构与数据流**：[architecture.md](./architecture.md)
 
 ---
 

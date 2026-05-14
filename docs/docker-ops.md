@@ -1,6 +1,6 @@
 # InStock Docker 运维常用命令
 
-与 [部署说明（deployment.md）](./deployment.md) 第 3 节配合使用。股市有风险，本系统仅供学习与研究。
+与 [部署说明（deployment.md）](./deployment.md) 第 3 节配合使用。**部署命令速查**：[deploy-cheatsheet.md](./deploy-cheatsheet.md)。股市有风险，本系统仅供学习与研究。
 
 **Compose 文件位置**：仓库内 `docker/docker-compose.yml`（同目录有 `.env.example` 与 `docker-compose.dev.yml`）。
 
