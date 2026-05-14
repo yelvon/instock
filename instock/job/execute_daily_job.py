@@ -6,6 +6,7 @@ import time
 import datetime
 import concurrent.futures
 import logging
+import os
 import os.path
 import sys
 
@@ -38,6 +39,14 @@ def main():
     logging.info("######## 任务执行时间: %s #######" % _start.strftime("%Y-%m-%d %H:%M:%S.%f"))
     # 第1步创建数据库
     bj.main()
+    # 数据管线：同步交易日历到本地（可 INSTOCK_SYNC_TRADE_CALENDAR=0 关闭）
+    if os.environ.get("INSTOCK_SYNC_TRADE_CALENDAR", "1") == "1":
+        try:
+            import instock.core.pipeline.trade_calendar as _tc
+
+            _tc.sync_from_network()
+        except Exception as e:
+            logging.error(f"execute_daily_job: 交易日历同步异常：{e}")
     # 第2.1步创建股票基础数据表
     hdj.main()
     # 第2.2步创建综合股票数据表

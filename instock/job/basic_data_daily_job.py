@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import os
 import os.path
 import sys
 
@@ -11,10 +12,11 @@ cpath_current = os.path.dirname(os.path.dirname(__file__))
 cpath = os.path.abspath(os.path.join(cpath_current, os.pardir))
 sys.path.append(cpath)
 import instock.lib.run_template as runt
+import instock.lib.job_argparse as job_argparse
 import instock.core.tablestructure as tbs
 import instock.lib.database as mdb
-import instock.core.stockfetch as stf
 from instock.core.singleton_stock import stock_data
+from instock.core.pipeline.data_source import get_default_market_data_source
 
 __author__ = 'myh '
 __date__ = '2023/3/10 '
@@ -37,6 +39,17 @@ def _ensure_spot_etf_tables():
             _ensure_table_from_tdef(tdef, "`date`,`code`")
         except Exception as e:
             logging.error(f"basic_data_daily_job._ensure_spot_etf_tables：{tdef['name']} {e}")
+
+
+def _run_spot_quality_after_etf(date):
+    """无额外 argv 的同步单机跑批：在 ETF 写入后校验当日 spot（与 run_template 多进程模式不混用）。"""
+    if len(sys.argv) != 1:
+        return
+    import instock.core.pipeline.data_quality as dq
+
+    results = dq.validate_spot_after_daily_jobs(date)
+    if dq.any_hard_fail(results) and os.environ.get("INSTOCK_QUALITY_STRICT") == "1":
+        raise RuntimeError(f"INSTOCK_QUALITY_STRICT: 数据质量未通过 {date}")
 
 
 # 股票实时行情数据。
@@ -70,7 +83,7 @@ def save_nph_etf_spot_data(date, before=True):
         return
     # 股票列表
     try:
-        data = stf.fetch_etfs(date)
+        data = get_default_market_data_source().fetch_daily_etfs(date)
         if data is None or len(data.index) == 0:
             return
 
@@ -84,6 +97,7 @@ def save_nph_etf_spot_data(date, before=True):
             cols_type = tbs.get_field_types(tbs.TABLE_CN_ETF_SPOT['columns'])
 
         mdb.insert_db_from_df(data, table_name, cols_type, False, "`date`,`code`")
+        _run_spot_quality_after_etf(date)
     except Exception as e:
         logging.error(f"basic_data_daily_job.save_nph_etf_spot_data处理异常：{e}")
 
@@ -91,6 +105,39 @@ def save_nph_etf_spot_data(date, before=True):
 
 def main():
     _ensure_spot_etf_tables()
+    if job_argparse.uses_extended_flags():
+        args = job_argparse.parse_job_args()
+        if args.dry_run:
+            if args.date:
+                logging.info("dry-run: 将处理 %s", args.date)
+            elif args.from_date and args.to_date:
+                ds = job_argparse.iter_trade_dates_inclusive(
+                    job_argparse.parse_iso_date(args.from_date),
+                    job_argparse.parse_iso_date(args.to_date),
+                )
+                logging.info("dry-run: 将处理 %s 个交易日", len(ds))
+            return
+        if args.date:
+            dates = [job_argparse.parse_iso_date(args.date)]
+        elif args.from_date and args.to_date:
+            dates = job_argparse.iter_trade_dates_inclusive(
+                job_argparse.parse_iso_date(args.from_date),
+                job_argparse.parse_iso_date(args.to_date),
+            )
+        else:
+            logging.error("扩展参数需指定 --date YYYY-MM-DD 或 --from-date 与 --to-date")
+            return
+        if args.force:
+            logging.warning("--force 已设置（审计）：将按日期覆盖写入 spot 表")
+        import instock.core.pipeline.data_quality as dq
+
+        for d in dates:
+            save_nph_stock_spot_data(d, False)
+            save_nph_etf_spot_data(d, False)
+            results = dq.validate_spot_after_daily_jobs(d)
+            if dq.any_hard_fail(results) and os.environ.get("INSTOCK_QUALITY_STRICT") == "1":
+                raise RuntimeError(f"INSTOCK_QUALITY_STRICT: 数据质量未通过 {d}")
+        return
     runt.run_with_args(save_nph_stock_spot_data)
     runt.run_with_args(save_nph_etf_spot_data)
 

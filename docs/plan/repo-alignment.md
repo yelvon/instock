@@ -14,6 +14,8 @@
 | 交易/机器人（与回测隔离） | `instock/trade/` |
 | 启动脚本 | `instock/bin/*.sh` |
 | Schema 文档脚本 | `scripts/gen_database_schema_doc.py` |
+| 数据管线（交易日历、质量、断档、采集抽象） | `instock/core/pipeline/`、`scripts/validate_daily.py`、`scripts/detect_gaps.py`、`instock/lib/job_argparse.py`、`instock/job/sync_trade_calendar_job.py` |
+| 环境变量示例 | 仓库根 `.env.example` |
 
 ---
 
@@ -42,6 +44,6 @@
 
 | 阶段 | 状态 | 备注 |
 |------|------|------|
-| 阶段 1 | 未开始 | |
+| 阶段 1 | 部分落地 | 交易日历表、质量校验、断档脚本、`basic_data_daily_job` 扩展 CLI；备份（§7）仍为低优先级 |
 | 阶段 2 | 未开始 | |
 | … | | |
