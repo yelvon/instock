@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import os
 import os.path
 import datetime
 import numpy as np
@@ -16,6 +17,8 @@ import instock.core.crawling.stock_lhb_em as sle
 import instock.core.crawling.stock_lhb_sina as sls
 import instock.core.crawling.stock_dzjy_em as sde
 import instock.core.crawling.stock_hist_em as she
+import instock.core.crawling.baostock_spot as bssp
+import instock.core.spot_source as spot_src
 import instock.core.crawling.stock_fund_em as sff
 import instock.core.crawling.stock_fhps_em as sfe
 import instock.core.crawling.stock_chip_race as scr
@@ -73,9 +76,28 @@ def fetch_stocks_trade_date():
 
 
 # 读取当天股票数据
-def fetch_etfs(date):
+def fetch_etfs(date, spot_source=None):
+    """
+    :param spot_source: ``eastmoney`` | ``baostock`` | ``auto``；默认读 ``INSTOCK_SPOT_DATA_SOURCE``（未设则为东财）。
+    """
     try:
-        data = fee.fund_etf_spot_em()
+        mode = spot_src.effective_spot_source(spot_source)
+        data = None
+        if mode in (spot_src.SPOT_SOURCE_EASTMONEY, spot_src.SPOT_SOURCE_AUTO):
+            try:
+                data = fee.fund_etf_spot_em()
+            except Exception as e:
+                if mode == spot_src.SPOT_SOURCE_AUTO:
+                    logging.warning("东方财富 ETF 快照异常，尝试 Baostock：%s", e)
+                    data = None
+                else:
+                    logging.error("stockfetch.fetch_etfs 东财异常：%s", e)
+                    return None
+            if (data is None or len(data.index) == 0) and mode == spot_src.SPOT_SOURCE_AUTO:
+                logging.warning("东方财富 ETF 快照为空，改用 Baostock 回补")
+                data = bssp.fund_etf_spot_baostock(date)
+        else:
+            data = bssp.fund_etf_spot_baostock(date)
         if data is None or len(data.index) == 0:
             return None
         if date is None:
@@ -91,9 +113,28 @@ def fetch_etfs(date):
 
 
 # 读取当天股票数据
-def fetch_stocks(date):
+def fetch_stocks(date, spot_source=None):
+    """
+    :param spot_source: ``eastmoney`` | ``baostock`` | ``auto``；默认读 ``INSTOCK_SPOT_DATA_SOURCE``（未设则为东财）。
+    """
     try:
-        data = she.stock_zh_a_spot_em()
+        mode = spot_src.effective_spot_source(spot_source)
+        data = None
+        if mode in (spot_src.SPOT_SOURCE_EASTMONEY, spot_src.SPOT_SOURCE_AUTO):
+            try:
+                data = she.stock_zh_a_spot_em()
+            except Exception as e:
+                if mode == spot_src.SPOT_SOURCE_AUTO:
+                    logging.warning("东方财富 A 股快照异常，尝试 Baostock：%s", e)
+                    data = None
+                else:
+                    logging.error("stockfetch.fetch_stocks 东财异常：%s", e)
+                    return None
+            if (data is None or len(data.index) == 0) and mode == spot_src.SPOT_SOURCE_AUTO:
+                logging.warning("东方财富 A 股快照为空，改用 Baostock 回补")
+                data = bssp.stock_zh_a_spot_baostock(date)
+        else:
+            data = bssp.stock_zh_a_spot_baostock(date)
         if data is None or len(data.index) == 0:
             return None
         if date is None:

@@ -81,7 +81,7 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "script": "basic_data_daily_job.py",
         "title": "股票/ETF 快照",
         "hint": "全市场当日报价快照",
-        "description": "抓取当日 A 股全市场快照与 ETF 快照，写入 cn_stock_spot、cn_etf_spot，是多数模块的数据底座。盘中可多次更新；选择交易日日期运行。",
+        "description": "抓取当日 A 股全市场快照与 ETF 快照，写入 cn_stock_spot、cn_etf_spot，是多数模块的数据底座。盘中可多次更新；选择交易日日期运行。可在本页选择快照数据源（默认东财；可选仅 Baostock 或东财失败/为空时回补 Baostock）。",
     },
     {
         "id": "selection_data_daily_job",
@@ -186,6 +186,10 @@ def _load() -> None:
                     item.setdefault("date_start", "")
                     item.setdefault("date_end", "")
                     item.setdefault("date_list", "")
+                    item.setdefault("spot_data_source", "")
+                    item.setdefault("trigger_source", "manual")
+                    item.setdefault("schedule_id", "")
+                    item.setdefault("schedule_title", "")
                     _RUNS[rid] = item
                     _ORDER.append(rid)
     except Exception:
@@ -246,6 +250,10 @@ def retry_from_run(run_id: str) -> Dict[str, Any]:
         date_start=old.get("date_start") or "",
         date_end=old.get("date_end") or "",
         date_list=old.get("date_list") or "",
+        spot_data_source=old.get("spot_data_source") or "",
+        trigger_source="manual",
+        schedule_id="",
+        schedule_title="",
     )
 
 
@@ -286,6 +294,10 @@ def _worker(run_id: str) -> None:
     env["PYTHONPATH"] = _REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env["PYTHONUNBUFFERED"] = "1"
+    if run.get("job_id") == "basic_data_daily_job":
+        from instock.core.spot_source import normalize_spot_source
+
+        env["INSTOCK_SPOT_DATA_SOURCE"] = normalize_spot_source(run.get("spot_data_source") or "")
     cmd = list(run["command"])
     if cmd and cmd[0] == sys.executable and (len(cmd) < 2 or cmd[1] != "-u"):
         cmd.insert(1, "-u")
@@ -367,10 +379,19 @@ def start_job(
     date_start: str = "",
     date_end: str = "",
     date_list: str = "",
+    spot_data_source: str = "",
+    trigger_source: str = "manual",
+    schedule_id: str = "",
+    schedule_title: str = "",
 ) -> Dict[str, Any]:
     cmd = _build_command(job_id, date_mode, date_start, date_end, date_list)
     run_id = str(uuid.uuid4())
     label = next((j["title"] for j in JOB_ITEMS if j["id"] == job_id), job_id)
+    spot_saved = ""
+    if job_id == "basic_data_daily_job":
+        from instock.core.spot_source import SPOT_SOURCE_EASTMONEY, normalize_spot_source
+
+        spot_saved = normalize_spot_source(spot_data_source or SPOT_SOURCE_EASTMONEY)
     rec: Dict[str, Any] = {
         "id": run_id,
         "job_id": job_id,
@@ -384,6 +405,10 @@ def start_job(
         "date_start": date_start,
         "date_end": date_end,
         "date_list": date_list,
+        "spot_data_source": spot_saved,
+        "trigger_source": (trigger_source or "manual").strip() or "manual",
+        "schedule_id": (schedule_id or "").strip(),
+        "schedule_title": (schedule_title or "").strip()[:200],
         "stdout_tail": "",
         "stderr_tail": "",
         "error_message": None,

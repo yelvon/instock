@@ -163,4 +163,6 @@ gf_client.json
 eastmoney_cookie.txt
 proxy.txt
 *.tmp
+sync_preferences.json
+scheduler.json
 

@@ -108,6 +108,8 @@ def main():
     _ensure_spot_etf_tables()
     if job_argparse.uses_extended_flags():
         args = job_argparse.parse_job_args()
+        if getattr(args, "spot_source", None):
+            os.environ["INSTOCK_SPOT_DATA_SOURCE"] = args.spot_source
         if args.dry_run:
             if args.date:
                 logging.info("dry-run: 将处理 %s", args.date)

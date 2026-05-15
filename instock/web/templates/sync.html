@@ -3,9 +3,53 @@
 {% block main_content %}
 <div class="page-content" style="padding: 12px 16px; overflow: auto; height: 100%;">
     <h3 class="header smaller lighter">数据同步</h3>
-    <p class="text-muted">在页面触发 <code>instock/job</code> 下 Python 脚本（子进程执行）。长任务会<strong>持续刷新下方进度</strong>（按输出字节/行数估算，非百分比）；完成后可在记录表中查看结果。下拉框中的<strong>「股票/ETF 快照」</strong>对应脚本 <code>basic_data_daily_job.py</code>（写入 cn_stock_spot / cn_etf_spot）。下方提供<strong>数据缺口自检</strong>：对比交易日与主表行数，列出缺失日期与推荐补救操作。</p>
+    <p class="text-muted">在页面触发 <code>instock/job</code> 下 Python 脚本（子进程执行）；长任务会<strong>持续刷新下方进度</strong>（按输出估算，非百分比）。<strong>快照数据源</strong>在下方「同步与快照设置」中配置（保存到服务器，用于手动与定时快照）。<strong>应用内定时</strong>由 Web 进程每分钟检查配置，触发后写入下方「执行记录」（条件列含「【定时】」）。若 Docker 仍启用镜像内系统 cron，请避免与定时规则在同一时刻重复跑同一作业。</p>
 
-    <div class="panel panel-info" style="max-width: 920px; margin-bottom: 14px;">
+    <div class="panel panel-primary" style="max-width: 920px; margin-bottom: 14px;">
+        <div class="panel-heading"><strong>同步与快照设置</strong></div>
+        <div class="panel-body">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>默认快照数据源（手动执行「股票/ETF 快照」及定时任务默认使用）</label>
+                <select id="spotDataSource" class="form-control" style="max-width: 520px;">
+                    <option value="eastmoney">东方财富（默认）</option>
+                    <option value="baostock">Baostock（宝上）</option>
+                    <option value="auto">东财优先，失败或空则 Baostock</option>
+                </select>
+                <p class="help-block text-muted" style="margin-top:8px;font-size:12px;">修改后自动保存到 <code>instock/config/sync_preferences.json</code>；执行快照作业时请求会带 <code>spot_data_source</code>，子进程设置 <code>INSTOCK_SPOT_DATA_SOURCE</code>。</p>
+                <p id="prefsMsg" class="text-info" style="font-size:12px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel panel-warning" style="max-width: 920px; margin-bottom: 14px;">
+        <div class="panel-heading"><strong>应用内定时任务</strong> <span class="text-muted" style="font-weight:normal;font-size:12px;">（配置：<code>instock/config/scheduler.json</code>）</span></div>
+        <div class="panel-body">
+            <p class="text-muted" style="font-size:12px;">依赖 <strong>Web 进程常驻</strong>（supervisor 启动）。到达设定「星期 + 时刻」时自动调用与手动相同的作业；每次触发在下方「执行记录」中可见（条件列含「定时」）。</p>
+            <div class="checkbox" style="margin-bottom:10px;">
+                <label><input type="checkbox" id="schedGlobalEnabled"> 启用应用内定时总开关</label>
+            </div>
+            <div class="table-responsive" style="max-height:200px; overflow:auto; border:1px solid #ddd; margin-bottom:10px;">
+                <table class="table table-condensed table-bordered" style="margin-bottom:0;font-size:12px;">
+                    <thead><tr><th>启用</th><th>名称</th><th>作业</th><th>星期</th><th>时刻(HH:MM)</th><th>快照源</th><th>操作</th></tr></thead>
+                    <tbody id="schedTableBody"></tbody>
+                </table>
+            </div>
+            <div class="well well-sm" style="background:#fafafa;">
+                <strong style="font-size:12px;">新增一条</strong>
+                <div class="row" style="margin-top:8px;">
+                    <div class="col-sm-3"><input type="text" id="schTitle" class="form-control input-sm" placeholder="名称，如 早盘快照"></div>
+                    <div class="col-sm-3"><select id="schJobId" class="form-control input-sm"></select></div>
+                    <div class="col-sm-2"><select id="schSpot" class="form-control input-sm"><option value="eastmoney">东财</option><option value="baostock">宝上</option><option value="auto">东财→宝上</option></select></div>
+                    <div class="col-sm-4"><button type="button" class="btn btn-sm btn-default" id="btnSchedAdd">加入列表</button> <button type="button" class="btn btn-sm btn-primary" id="btnSchedSave">保存全部定时配置</button></div>
+                </div>
+                <div style="margin-top:8px;font-size:11px;" class="text-muted">星期（可多选）：</div>
+                <div id="schWeekdays" style="margin-bottom:6px;"></div>
+                <label style="font-size:11px;">触发时刻，每行一个 HH:MM（如 09:30）</label>
+                <textarea id="schTimes" class="form-control" rows="3" style="font-family:monospace;font-size:11px;" placeholder="09:30&#10;13:00&#10;15:00"></textarea>
+            </div>
+            <p id="schedMsg" class="text-info" style="font-size:12px;"></p>
+        </div>
+    </div>
         <div class="panel-heading"><strong>数据缺口自检</strong> <span class="text-muted" style="font-weight:normal;font-size:12px;">（cn_stock_spot / cn_etf_spot 与 trade_calendar）</span></div>
         <div class="panel-body">
             <div class="row" style="max-width: 520px; margin-bottom:10px;">
@@ -152,9 +196,13 @@
     const deleteRunUrl = '/instock/api/sync/delete_run';
     const detailUrl = '/instock/api/sync/run_detail';
     const cookieUrl = '/instock/api/sync/cookie';
+    const prefsUrl = '/instock/api/sync/prefs';
+    const schedulerUrl = '/instock/api/sync/scheduler';
 
     let pollTimer = null;
     let trackingRunId = null;
+    let schedulerDraft = [];
+    let prefsTimer = null;
 
     function esc(s) {
         if (s == null) return '';
@@ -188,8 +236,21 @@
                         .attr('data-description', desc)
                 );
             });
+            fillSchJobSelect(res.jobs);
             updateHint();
         });
+    }
+
+    function fillSchJobSelect(jobs) {
+        const schSel = $('#schJobId');
+        const cur = schSel.val();
+        schSel.empty();
+        (jobs || []).forEach(function (j) {
+            schSel.append($('<option></option>').val(j.id).text(j.title));
+        });
+        if (cur) {
+            schSel.val(cur);
+        }
     }
 
     function updateHint() {
@@ -248,23 +309,37 @@
 
     /** 与触发时 payload 一致：date_mode + 日期参数（历史记录可能缺字段，已 setdefault 由后端补） */
     function formatRunConditions(r) {
+        let prefix = '';
+        if (r.trigger_source === 'scheduler') {
+            prefix = '【定时】' + (r.schedule_title || r.schedule_id || '') + ' · ';
+        }
         if (r.job_id === 'init_job' || r.job_id === 'sync_trade_calendar_job') {
-            return '默认（初始化/日历同步忽略日期）';
+            return prefix + '默认（初始化/日历同步忽略日期）';
         }
         const dm = String(r.date_mode || 'default').toLowerCase();
+        let cond = '';
         if (dm === 'default') {
-            return '默认';
-        }
-        if (dm === 'list') {
+            cond = '默认';
+        } else if (dm === 'list') {
             const dl = (r.date_list || '').trim();
-            return dl ? ('枚举：' + dl) : '枚举：（未填）';
-        }
-        if (dm === 'range') {
+            cond = dl ? ('枚举：' + dl) : '枚举：（未填）';
+        } else if (dm === 'range') {
             const ds = (r.date_start || '').trim();
             const de = (r.date_end || '').trim();
-            return '区间：' + (ds || '—') + ' ~ ' + (de || '—');
+            cond = '区间：' + (ds || '—') + ' ~ ' + (de || '—');
+        } else {
+            cond = '模式：' + dm;
         }
-        return '模式：' + dm;
+        if (r.job_id === 'basic_data_daily_job') {
+            const s = String(r.spot_data_source || '').toLowerCase();
+            const lab = { eastmoney: '东财', baostock: 'Baostock', auto: '东财→宝上' };
+            if (s && lab[s]) {
+                cond += ' · 快照：' + lab[s];
+            } else if (s) {
+                cond += ' · 快照：' + s;
+            }
+        }
+        return prefix + cond;
     }
 
     function stopPoll() {
@@ -455,6 +530,9 @@
         const job_id = $('#syncJob').val();
         let date_mode = $('input[name="dm"]:checked').val();
         const payload = { job_id: job_id, date_mode: date_mode, date_start: '', date_end: '', date_list: '' };
+        if (job_id === 'basic_data_daily_job') {
+            payload.spot_data_source = $('#spotDataSource').val() || 'eastmoney';
+        }
         if (job_id === 'init_job' || job_id === 'sync_trade_calendar_job') {
             payload.date_mode = 'default';
         } else if (date_mode === 'list') {
@@ -643,7 +721,187 @@
         document.getElementById('syncJobFormAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
+    function initSchWeekdays() {
+        const labels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+        const box = $('#schWeekdays');
+        box.empty();
+        labels.forEach(function (lbl, idx) {
+            const lab = $('<label class="checkbox-inline" style="margin-right:10px;font-size:12px;"></label>');
+            const cb = $('<input type="checkbox" class="sch-wd">').val(String(idx));
+            if (idx <= 4) {
+                cb.prop('checked', true);
+            }
+            lab.append(cb).append(document.createTextNode(' ' + lbl));
+            box.append(lab);
+        });
+    }
+
+    function loadPrefs() {
+        $.getJSON(prefsUrl, function (res) {
+            if (!res.ok) {
+                return;
+            }
+            const v = res.prefs && res.prefs.default_spot_data_source ? res.prefs.default_spot_data_source : 'eastmoney';
+            $('#spotDataSource').val(v);
+            $('#prefsMsg').text('已从服务器加载快照偏好');
+        }).fail(function () {
+            $('#prefsMsg').text('加载偏好失败（可修改后自动重试保存）');
+        });
+    }
+
+    $('#spotDataSource').on('change', function () {
+        $('#prefsMsg').text('保存中…');
+        if (prefsTimer) {
+            clearTimeout(prefsTimer);
+        }
+        prefsTimer = setTimeout(function () {
+            $.ajax({
+                url: prefsUrl,
+                method: 'POST',
+                contentType: 'application/json; charset=UTF-8',
+                data: JSON.stringify({ default_spot_data_source: $('#spotDataSource').val() }),
+                success: function (res) {
+                    $('#prefsMsg').text(res.ok ? '偏好已保存' : (res.error || '保存失败'));
+                },
+                error: function () {
+                    $('#prefsMsg').text('保存偏好请求失败');
+                }
+            });
+        }, 350);
+    });
+
+    function renderSchedTable() {
+        const tb = $('#schedTableBody');
+        tb.empty();
+        const spotLab = { eastmoney: '东财', baostock: '宝上', auto: '东财→宝上' };
+        const jobTitle = {};
+        $('#schJobId option').each(function () {
+            jobTitle[$(this).val()] = $(this).text();
+        });
+        (schedulerDraft || []).forEach(function (row, idx) {
+            const wdNames = (row.weekdays || []).map(function (w) {
+                const n = parseInt(w, 10);
+                return ['一', '二', '三', '四', '五', '六', '日'][n] || w;
+            }).join('');
+            const tr = $('<tr></tr>');
+            const enCb = $('<input type="checkbox" class="sch-row-en">').prop('checked', !!row.enabled);
+            enCb.on('change', function () {
+                if (schedulerDraft[idx]) {
+                    schedulerDraft[idx].enabled = $(this).is(':checked');
+                }
+            });
+            tr.append($('<td></td>').append(enCb));
+            tr.append($('<td></td>').text(row.title || '').css({ maxWidth: '140px', wordBreak: 'break-all' }));
+            tr.append($('<td></td>').text(jobTitle[row.job_id] || row.job_id).css({ fontSize: '11px' }));
+            tr.append($('<td></td>').text(wdNames));
+            tr.append($('<td></td>').text((row.times || []).join(', ')).css({ fontSize: '11px', wordBreak: 'break-all' }));
+            const sp = String(row.spot_data_source || 'eastmoney').toLowerCase();
+            tr.append($('<td></td>').text(spotLab[sp] || sp));
+            const btn = $('<button type="button" class="btn btn-xs btn-danger">删除</button>');
+            btn.on('click', function () {
+                schedulerDraft.splice(idx, 1);
+                renderSchedTable();
+            });
+            tr.append($('<td></td>').append(btn));
+            tb.append(tr);
+        });
+    }
+
+    function loadScheduler() {
+        $.getJSON(schedulerUrl, function (res) {
+            if (!res.ok) {
+                $('#schedMsg').text(res.error || '加载定时配置失败');
+                return;
+            }
+            schedulerDraft = [];
+            (res.config.schedules || []).forEach(function (s) {
+                schedulerDraft.push(JSON.parse(JSON.stringify(s)));
+            });
+            $('#schedGlobalEnabled').prop('checked', res.config.enabled_globally !== false);
+            renderSchedTable();
+            $('#schedMsg').text('已加载定时配置');
+        }).fail(function () {
+            $('#schedMsg').text('请求定时配置接口失败');
+        });
+    }
+
+    $('#btnSchedAdd').on('click', function () {
+        const title = $('#schTitle').val().trim();
+        const job_id = $('#schJobId').val();
+        const lines = $('#schTimes').val().split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+        const weekdays = $('.sch-wd:checked').map(function () { return parseInt($(this).val(), 10); }).get();
+        if (!title) {
+            $('#schedMsg').text('请填写名称');
+            return;
+        }
+        if (!lines.length) {
+            $('#schedMsg').text('请至少填写一行触发时刻 HH:MM');
+            return;
+        }
+        schedulerDraft.push({
+            id: 'sched_' + Date.now(),
+            title: title,
+            enabled: true,
+            job_id: job_id,
+            date_mode: 'default',
+            date_start: '',
+            date_end: '',
+            date_list: '',
+            weekdays: weekdays.length ? weekdays : [0, 1, 2, 3, 4],
+            times: lines,
+            spot_data_source: $('#schSpot').val() || 'eastmoney'
+        });
+        $('#schTitle').val('');
+        $('#schTimes').val('');
+        $('#schedMsg').text('已加入列表，请点击「保存全部定时配置」写入服务器');
+        renderSchedTable();
+    });
+
+    $('#btnSchedSave').on('click', function () {
+        $('#schedMsg').text('正在保存…');
+        const body = {
+            version: 1,
+            enabled_globally: $('#schedGlobalEnabled').is(':checked'),
+            schedules: schedulerDraft
+        };
+        $.ajax({
+            url: schedulerUrl,
+            method: 'POST',
+            contentType: 'application/json; charset=UTF-8',
+            data: JSON.stringify(body),
+            success: function (res) {
+                if (res.ok) {
+                    $('#schedMsg').text('定时配置已保存');
+                    schedulerDraft = [];
+                    (res.config.schedules || []).forEach(function (s) {
+                        schedulerDraft.push(JSON.parse(JSON.stringify(s)));
+                    });
+                    renderSchedTable();
+                } else {
+                    $('#schedMsg').text(res.error || '保存失败');
+                }
+            },
+            error: function (xhr) {
+                let msg = '保存失败';
+                try {
+                    const j = JSON.parse(xhr.responseText);
+                    if (j.error) {
+                        msg = j.error;
+                    }
+                } catch (e) {}
+                $('#schedMsg').text(msg);
+            }
+        });
+    });
+
+    $('#schedGlobalEnabled').on('change', function () {
+        $('#schedMsg').text('总开关已更改，请点击「保存全部定时配置」后生效');
+    });
+
+    initSchWeekdays();
     loadJobs();
+    loadPrefs();
+    loadScheduler();
     initDhDates();
     loadRuns();
     loadCookie();

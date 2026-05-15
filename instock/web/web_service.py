@@ -29,6 +29,7 @@ import instock.web.dataIndicatorsHandler as dataIndicatorsHandler
 import instock.web.sync_job_handler as syncJobHandler
 import instock.web.base as webBase
 import instock.web.sync_job_service as syncJobService
+import instock.web.scheduler_service as schedulerService
 
 __author__ = 'myh '
 __date__ = '2023/3/10 '
@@ -57,6 +58,8 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/retry", syncJobHandler.SyncRetryHandler),
             (r"/instock/api/sync/delete_run", syncJobHandler.SyncDeleteRunHandler),
             (r"/instock/api/sync/cookie", syncJobHandler.SyncCookieApiHandler),
+            (r"/instock/api/sync/prefs", syncJobHandler.SyncPrefsApiHandler),
+            (r"/instock/api/sync/scheduler", syncJobHandler.SchedulerConfigApiHandler),
         ]
         settings = dict(  # 配置
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
@@ -91,6 +94,8 @@ def main():
 
     print(f"服务已启动，web地址 : http://localhost:{port}/")
     logging.error(f"服务已启动，web地址 : http://localhost:{port}/")
+
+    schedulerService.install_tornado_scheduler()
 
     tornado.ioloop.IOLoop.current().start()
 

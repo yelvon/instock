@@ -108,6 +108,7 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
                 date_start=body.get("date_start") or "",
                 date_end=body.get("date_end") or "",
                 date_list=body.get("date_list") or "",
+                spot_data_source=(body.get("spot_data_source") or ""),
             )
             self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
         except Exception as e:
@@ -215,6 +216,63 @@ class SyncCookieApiHandler(webBase.BaseHandler, ABC):
                     ensure_ascii=False,
                 )
             )
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class SyncPrefsApiHandler(webBase.BaseHandler, ABC):
+    """默认快照数据源等偏好：GET/POST JSON。"""
+
+    def get(self):
+        import instock.web.sync_preferences as prefs
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        self.write(json.dumps({"ok": True, "prefs": prefs.read_prefs()}, ensure_ascii=False))
+
+    def post(self):
+        import instock.web.sync_preferences as prefs
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        try:
+            out = prefs.write_prefs(body)
+            self.write(json.dumps({"ok": True, "prefs": out}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class SchedulerConfigApiHandler(webBase.BaseHandler, ABC):
+    """应用内定时任务配置（触发记录见下方「执行记录」，trigger_source=scheduler）。"""
+
+    def get(self):
+        import instock.web.scheduler_service as sch
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        self.write(json.dumps({"ok": True, "config": sch.load_config()}, ensure_ascii=False))
+
+    def post(self):
+        import instock.web.scheduler_service as sch
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        try:
+            cfg = sch.save_config(body)
+            self.write(json.dumps({"ok": True, "config": cfg}, ensure_ascii=False))
         except ValueError as e:
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))

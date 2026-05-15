@@ -30,6 +30,13 @@ def parse_job_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="强制覆盖等（由具体 job 解释）",
     )
+    p.add_argument(
+        "--spot-source",
+        dest="spot_source",
+        choices=["eastmoney", "baostock", "auto"],
+        default=None,
+        help="股票/ETF 快照数据源：eastmoney 仅东财，baostock 仅 Baostock，auto 东财失败或为空时回补 Baostock（basic_data_daily_job 等）",
+    )
     return p.parse_args(argv[1:] if argv is not None else sys.argv[1:])
 
 
