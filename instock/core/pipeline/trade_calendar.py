@@ -103,6 +103,26 @@ def table_row_count() -> int:
         conn.close()
 
 
+def lookup_is_open(cal_date: datetime.date) -> Optional[bool]:
+    """若 `trade_calendar` 存在该行则返回 `is_open`；无行返回 None（由调用方决定是否回落其它日历）。"""
+    ensure_table()
+    conn = mdb.get_connection()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT `is_open` FROM `{TABLE_NAME}` WHERE `cal_date` = %s LIMIT 1",
+                (cal_date,),
+            )
+            r = cur.fetchone()
+            if not r:
+                return None
+            return bool(int(r[0]))
+    finally:
+        conn.close()
+
+
 def sync_from_network() -> int:
     """从默认数据源拉取交易日历并写入 trade_calendar。"""
     from instock.core.pipeline.data_source import get_default_market_data_source

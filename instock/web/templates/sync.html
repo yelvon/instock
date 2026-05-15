@@ -221,11 +221,17 @@
     }
 
     function progressSummary(r) {
-        if (r.status !== 'running') return '-';
         const b = r.progress_bytes != null ? r.progress_bytes : 0;
         const ln = r.progress_lines != null ? r.progress_lines : 0;
         const ec = r.error_line_count != null ? r.error_line_count : 0;
-        return esc(String(b)) + ' B · ' + esc(String(ln)) + ' 行 · 异常行≈' + esc(String(ec));
+        const core = esc(String(b)) + ' B · ' + esc(String(ln)) + ' 行 · 异常行≈' + esc(String(ec));
+        if (r.status === 'running') {
+            return core;
+        }
+        if (r.status === 'success' || r.status === 'failed') {
+            return core + ' <span class="text-muted">(结束)</span>';
+        }
+        return '-';
     }
 
     function combinedErrorsText(r) {

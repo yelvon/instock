@@ -338,6 +338,16 @@ docker exec InStock curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9988
 - Cookie 会过期（几天到数周不等），抓取异常时优先尝试重新获取。
 - 建议定期更新；勿将 Cookie 提交到公开仓库或泄露给他人。
 
+### 4.4 东方财富 HTTP 调优（可选）
+
+代码侧已加强连接重试、读超时与请求间隔；仍频繁 **502 / 断连 / Read timeout** 时，可在运行环境增加下列变量（**本机 export** 或 **Docker Compose `instock` 服务的 `environment`**）：
+
+| 环境变量 | 含义 | 默认 |
+|----------|------|------|
+| `INSTOCK_EM_HTTP_CONNECT_TIMEOUT` | TCP 连接超时（秒） | `10` |
+| `INSTOCK_EM_HTTP_READ_TIMEOUT` | 单次响应读超时（秒） | `45` |
+| `INSTOCK_EM_OUTER_RETRIES` | 单次 GET 在应用层的额外重试次数（1～8） | `4` |
+
 ---
 
 ## 5. 与官方文档的关系

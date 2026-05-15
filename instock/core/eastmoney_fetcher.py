@@ -1,17 +1,45 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import logging
 import os
+import random
+import time
+from pathlib import Path
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from pathlib import Path
-import time
-import random
+
 from instock.core.singleton_proxy import proxys
 
 __author__ = 'myh '
 __date__ = '2025/12/31 '
+
+_log = logging.getLogger(__name__)
+
+
+def _env_float(name: str, default: str) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _default_request_timeout():
+    """(connect, read) 秒；读超时略大以减轻东财大 JSON / 502 风暴下的 ReadTimeout。"""
+    return (
+        _env_float("INSTOCK_EM_HTTP_CONNECT_TIMEOUT", "10"),
+        _env_float("INSTOCK_EM_HTTP_READ_TIMEOUT", "45"),
+    )
+
+
+def _outer_retry_count() -> int:
+    try:
+        return max(1, min(8, int(os.environ.get("INSTOCK_EM_OUTER_RETRIES", "4"))))
+    except (TypeError, ValueError):
+        return 4
+
 
 class eastmoney_fetcher:
     """
@@ -39,7 +67,7 @@ class eastmoney_fetcher:
         # 2. 尝试从文件获取
         cookie_file = Path(os.path.join(self.base_dir, 'config', 'eastmoney_cookie.txt'))
         if cookie_file.exists():
-            with open(cookie_file, 'r') as f:
+            with open(cookie_file, "r", encoding="utf-8", errors="replace") as f:
                 cookie = f.read().strip()
             if cookie:
                 # print("文件中的Cookie: 已设置")
@@ -52,17 +80,18 @@ class eastmoney_fetcher:
         """创建并配置会话"""
         session = requests.Session()
 
-        # 配置连接池
+        # 连接层重试：502/断连时略拉长间隔，减轻「too many 502」与对端掐连接
         retry_strategy = Retry(
-            total=3,
-            backoff_factor=0.1,
+            total=6,
+            backoff_factor=0.9,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "POST", "OPTIONS"]
+            allowed_methods=["HEAD", "GET", "POST", "OPTIONS"],
+            respect_retry_after_header=True,
         )
         adapter = HTTPAdapter(
             max_retries=retry_strategy,
-            pool_connections=50,  # 增加连接池大小
-            pool_maxsize=50  # 增加连接池最大大小
+            pool_connections=24,
+            pool_maxsize=24,
         )
 
         # 为http和https请求添加适配器
@@ -86,44 +115,56 @@ class eastmoney_fetcher:
         session.headers.update(headers)
         return session
 
-    def make_request(self, url, params=None, retry=3, timeout=10):
+    def make_request(self, url, params=None, retry=None, timeout=None):
         """
         发送请求
         :param url: 请求URL
         :param params: 请求参数
-        :param retry: 重试次数
-        :param timeout: 超时时间
+        :param retry: 应用层重试次数（None 则读环境变量 INSTOCK_EM_OUTER_RETRIES，默认 4）
+        :param timeout: 秒标量或 (connect, read) 元组；None 则用 INSTOCK_EM_HTTP_* 环境变量
         :return: 响应对象
         """
+        if retry is None:
+            retry = _outer_retry_count()
+        if timeout is None:
+            timeout = _default_request_timeout()
         for i in range(retry):
             try:
                 response = self.session.get(
                     url,
                     proxies=self.proxies,
                     params=params,
-                    timeout=timeout
+                    timeout=timeout,
                 )
                 response.raise_for_status()  # 检查HTTP错误
                 return response
             except requests.exceptions.RequestException as e:
-                print(f"请求错误: {e}, 第 {i + 1}/{retry} 次重试")
+                _log.warning("eastmoney GET 失败 %s/%s: %s", i + 1, retry, e)
                 if i < retry - 1:
-                    # 随机延迟后重试
-                    time.sleep(random.uniform(1, 3))
+                    # 指数退避 + 抖动，减轻限流与 502 连击
+                    base = 1.2 * (2**i)
+                    time.sleep(random.uniform(base, base + 2.5))
                 else:
                     raise
 
-    def make_post_request(self, url, data=None, json=None, params=None, retry=3, timeout=60):
+    def make_post_request(self, url, data=None, json=None, params=None, retry=None, timeout=None):
         """
         发送POST请求
         :param url: 请求URL
         :param data: 请求数据（表单形式）
         :param json: 请求数据（JSON形式）
         :param params: URL参数
-        :param retry: 重试次数
-        :param timeout: 超时时间
+        :param retry: 应用层重试次数（None 则同 make_request）
+        :param timeout: 默认 (10, 60) 读略长便于大响应
         :return: 响应对象
         """
+        if retry is None:
+            retry = _outer_retry_count()
+        if timeout is None:
+            timeout = (
+                _env_float("INSTOCK_EM_HTTP_CONNECT_TIMEOUT", "10"),
+                max(60.0, _env_float("INSTOCK_EM_HTTP_READ_TIMEOUT", "45")),
+            )
         for i in range(retry):
             try:
                 response = self.session.post(
@@ -132,15 +173,15 @@ class eastmoney_fetcher:
                     params=params,
                     data=data,
                     json=json,
-                    timeout=timeout
+                    timeout=timeout,
                 )
                 response.raise_for_status()  # 检查HTTP错误
                 return response
             except requests.exceptions.RequestException as e:
-                print(f"请求错误: {e}, 第 {i + 1}/{retry} 次重试")
+                _log.warning("eastmoney POST 失败 %s/%s: %s", i + 1, retry, e)
                 if i < retry - 1:
-                    # 随机延迟后重试
-                    time.sleep(random.uniform(1, 3))
+                    base = 1.2 * (2**i)
+                    time.sleep(random.uniform(base, base + 2.5))
                 else:
                     raise
 

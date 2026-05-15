@@ -15,7 +15,7 @@ import instock.lib.run_template as runt
 import instock.lib.job_argparse as job_argparse
 import instock.core.tablestructure as tbs
 import instock.lib.database as mdb
-from instock.core.singleton_stock import stock_data
+import instock.core.stockfetch as stf
 from instock.core.pipeline.data_source import get_default_market_data_source
 
 __author__ = 'myh '
@@ -58,7 +58,8 @@ def save_nph_stock_spot_data(date, before=True):
         return
     # 股票列表
     try:
-        data = stock_data(date).get_data()
+        # 勿用 singleton stock_data(date)：多日期枚举/线程池下只会缓存首个 date，导致补数异常。
+        data = stf.fetch_stocks(date)
         if data is None or len(data.index) == 0:
             return
 

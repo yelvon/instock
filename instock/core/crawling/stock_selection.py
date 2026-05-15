@@ -14,6 +14,10 @@ __date__ = '2025/12/31 '
 # 创建全局实例，供所有函数使用
 fetcher = eastmoney_fetcher()
 
+# 选股器单次请求字段多、响应体大，读超时略加长
+_XUANGU_TIMEOUT = (12, 90)
+
+
 def stock_selection() -> pd.DataFrame:
     """
     东方财富网-个股-选股器
@@ -37,7 +41,7 @@ def stock_selection() -> pd.DataFrame:
         "client": "WEB"
     }
 
-    r = fetcher.make_request(url, params=params)
+    r = fetcher.make_request(url, params=params, timeout=_XUANGU_TIMEOUT, retry=5)
     data_json = r.json()
     data = data_json["result"]["data"]
     if not data:
@@ -47,10 +51,10 @@ def stock_selection() -> pd.DataFrame:
     page_count = math.ceil(data_count/page_size)
     while page_count > 1:
         # 添加随机延迟，避免爬取过快
-        time.sleep(random.uniform(1, 1.5))
+        time.sleep(random.uniform(1.2, 2.2))
         page_current = page_current + 1
         params["p"] = page_current
-        r = fetcher.make_request(url, params=params)
+        r = fetcher.make_request(url, params=params, timeout=_XUANGU_TIMEOUT, retry=5)
         data_json = r.json()
         _data = data_json["result"]["data"]
         data.extend(_data)
@@ -90,7 +94,7 @@ def stock_selection_params():
         "client": "WEB"
     }
 
-    r = fetcher.make_request(url, params=params)
+    r = fetcher.make_request(url, params=params, timeout=_XUANGU_TIMEOUT, retry=5)
     data_json = r.json()
     zxzb = data_json["result"]["data"]  # 指标
     print(zxzb)
