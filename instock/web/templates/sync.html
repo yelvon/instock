@@ -3,7 +3,47 @@
 {% block main_content %}
 <div class="page-content" style="padding: 12px 16px; overflow: auto; height: 100%;">
     <h3 class="header smaller lighter">数据同步</h3>
-    <p class="text-muted">在页面触发 <code>instock/job</code> 下 Python 脚本（子进程执行）。长任务会<strong>持续刷新下方进度</strong>（按输出字节/行数估算，非百分比）；完成后可在记录表中查看结果。下拉框中的<strong>「股票/ETF 快照」</strong>对应脚本 <code>basic_data_daily_job.py</code>（写入 cn_stock_spot / cn_etf_spot）。</p>
+    <p class="text-muted">在页面触发 <code>instock/job</code> 下 Python 脚本（子进程执行）。长任务会<strong>持续刷新下方进度</strong>（按输出字节/行数估算，非百分比）；完成后可在记录表中查看结果。下拉框中的<strong>「股票/ETF 快照」</strong>对应脚本 <code>basic_data_daily_job.py</code>（写入 cn_stock_spot / cn_etf_spot）。下方提供<strong>数据缺口自检</strong>：对比交易日与主表行数，列出缺失日期与推荐补救操作。</p>
+
+    <div class="panel panel-info" style="max-width: 920px; margin-bottom: 14px;">
+        <div class="panel-heading"><strong>数据缺口自检</strong> <span class="text-muted" style="font-weight:normal;font-size:12px;">（cn_stock_spot / cn_etf_spot 与 trade_calendar）</span></div>
+        <div class="panel-body">
+            <div class="row" style="max-width: 520px; margin-bottom:10px;">
+                <div class="col-xs-5">
+                    <label style="font-size:12px;">开始日期</label>
+                    <input type="text" id="dhFrom" class="form-control input-sm" placeholder="YYYY-MM-DD">
+                </div>
+                <div class="col-xs-5">
+                    <label style="font-size:12px;">结束日期</label>
+                    <input type="text" id="dhTo" class="form-control input-sm" placeholder="YYYY-MM-DD">
+                </div>
+                <div class="col-xs-2" style="padding-top:20px;">
+                    <button type="button" class="btn btn-sm btn-primary" id="btnDhRun">检查</button>
+                </div>
+            </div>
+            <p class="text-muted" style="font-size:11px;">留空则默认近 60 个自然日。检查可能访问网络拉交易日历（当本地 trade_calendar 为空时）。</p>
+            <div id="dhMsg" class="text-info" style="font-size:12px; margin-bottom:8px;"></div>
+            <div id="dhSummary" style="font-size:13px; margin-bottom:10px;"></div>
+            <div id="dhRemediation" style="font-size:12px; line-height:1.7; margin-bottom:10px;"></div>
+            <div style="margin-bottom:8px;">
+                <strong style="font-size:12px;">缺日一键填入快照枚举</strong>
+                <span class="text-muted" style="font-size:11px;">（仅填日期，需在下方点击「开始执行」）</span>
+            </div>
+            <textarea id="dhMissingCsv" class="form-control" rows="2" readonly style="font-family: monospace; font-size: 11px; max-width: 720px;" placeholder="检查后出现缺失日期…"></textarea>
+            <div style="margin-top:8px;">
+                <button type="button" class="btn btn-default btn-sm" id="btnDhApply">选中「股票/ETF 快照」+ 枚举并填入</button>
+                <button type="button" class="btn btn-default btn-sm" id="btnDhScroll">跳到作业表单</button>
+            </div>
+            <h5 style="margin-top:14px; font-size:13px;">交易日行数明细</h5>
+            <div class="table-responsive" style="max-height: 220px; overflow: auto; border: 1px solid #ddd;">
+                <table class="table table-condensed table-bordered" style="margin-bottom:0; font-size:11px;">
+                    <thead><tr><th>日期</th><th>股票行数</th><th>ETF行数</th><th>缺主表</th><th>股票行数偏低</th></tr></thead>
+                    <tbody id="dhDailyBody"></tbody>
+                </table>
+            </div>
+            <p class="text-muted" style="font-size:11px; margin-top:8px;">命令行补充：<code id="dhCliHint"></code></p>
+        </div>
+    </div>
 
     <div class="panel panel-default" style="max-width: 920px; margin-bottom: 14px;">
         <div class="panel-heading"><strong>东方财富 Cookie</strong> <span class="text-muted" style="font-weight:normal;font-size:12px;">（与 <code>instock/config/eastmoney_cookie.txt</code> 一致，Docker 挂载时即宿主机挂载文件）</span></div>
@@ -19,7 +59,7 @@
         </div>
     </div>
 
-    <div class="well" style="max-width: 920px;">
+    <div class="well" id="syncJobFormAnchor" style="max-width: 920px;">
         <div class="form-group">
             <label>作业</label>
             <select id="syncJob" class="form-control" style="max-width: 520px;"></select>
@@ -48,7 +88,7 @@
                 <div class="col-xs-6"><input type="text" id="dateEnd" class="form-control" placeholder="2024-06-30"></div>
             </div>
         </div>
-        <p class="text-warning" id="initHint" style="display:none;">「初始化数据库」仅支持默认模式（将忽略日期）。</p>
+        <p class="text-warning" id="initHint" style="display:none;">「初始化数据库」与「同步交易日历」仅支持默认日期模式（将忽略枚举/区间）。</p>
         <button type="button" class="btn btn-primary" id="btnRun">开始执行</button>
         <span id="runMsg" class="text-info" style="margin-left:12px;"></span>
 
@@ -157,7 +197,7 @@
         $('#syncHint').text(opt.attr('data-hint') || '');
         $('#jobDesc').text(opt.attr('data-description') || '（无说明）');
         const id = $('#syncJob').val();
-        const isInit = id === 'init_job';
+        const isInit = id === 'init_job' || id === 'sync_trade_calendar_job';
         $('#initHint').toggle(isInit);
         if (isInit) {
             $('input[name="dm"][value="default"]').prop('checked', true);
@@ -202,8 +242,8 @@
 
     /** 与触发时 payload 一致：date_mode + 日期参数（历史记录可能缺字段，已 setdefault 由后端补） */
     function formatRunConditions(r) {
-        if (r.job_id === 'init_job') {
-            return '默认（初始化忽略日期）';
+        if (r.job_id === 'init_job' || r.job_id === 'sync_trade_calendar_job') {
+            return '默认（初始化/日历同步忽略日期）';
         }
         const dm = String(r.date_mode || 'default').toLowerCase();
         if (dm === 'default') {
@@ -409,7 +449,7 @@
         const job_id = $('#syncJob').val();
         let date_mode = $('input[name="dm"]:checked').val();
         const payload = { job_id: job_id, date_mode: date_mode, date_start: '', date_end: '', date_list: '' };
-        if (job_id === 'init_job') {
+        if (job_id === 'init_job' || job_id === 'sync_trade_calendar_job') {
             payload.date_mode = 'default';
         } else if (date_mode === 'list') {
             payload.date_list = $('#dateList').val().trim();
@@ -488,7 +528,117 @@
         });
     });
 
+    const healthUrl = '/instock/api/sync/data_health';
+
+    function initDhDates() {
+        const t = new Date();
+        const pad = function (n) { return (n < 10 ? '0' : '') + n; };
+        const iso = function (d) {
+            return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        };
+        const to = iso(t);
+        const f = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 60);
+        $('#dhFrom').val(iso(f));
+        $('#dhTo').val(to);
+    }
+
+    function runDataHealth() {
+        const from = $('#dhFrom').val().trim();
+        const to = $('#dhTo').val().trim();
+        let url = healthUrl;
+        if (from && to) {
+            url += '?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+        }
+        $('#dhMsg').text('检查中…');
+        $('#dhSummary').html('');
+        $('#dhRemediation').html('');
+        $('#dhDailyBody').empty();
+        $('#dhMissingCsv').val('');
+        $('#dhCliHint').text('');
+        $.getJSON(url, function (res) {
+            if (!res.ok) {
+                $('#dhMsg').text(res.error || '失败');
+                return;
+            }
+            $('#dhMsg').text('完成（区间 ' + res.date_from + ' ~ ' + res.date_to + '）');
+            const miss = res.missing_spot_trade_dates || [];
+            $('#dhMissingCsv').val(miss.join(','));
+            let sum = '<strong>trade_calendar</strong> 行数：<span class="text-info">' + esc(String(res.trade_calendar_rows)) + '</span> · ';
+            sum += '<strong>应交易日数</strong>：' + esc(String(res.expected_trade_days)) + ' · ';
+            sum += '<strong>缺主表日数</strong>：<span class="' + (miss.length ? 'text-danger' : 'text-success') + '">' + esc(String(miss.length)) + '</span>';
+            $('#dhSummary').html(sum);
+            const rem = res.remediation || [];
+            if (rem.length === 0) {
+                $('#dhRemediation').html('<span class="text-success">未发现需人工跟进的缺口（仍可查下方明细）。</span>');
+            } else {
+                let html = '<strong>建议操作</strong><ul style="margin-bottom:0;">';
+                rem.forEach(function (b) {
+                    html += '<li><strong>' + esc(b.title || '') + '</strong>';
+                    if (b.hint) {
+                        html += ' <span class="text-muted">（' + esc(b.hint) + '）</span>';
+                    }
+                    if (b.dates && b.dates.length) {
+                        html += '<br><span class="text-muted" style="font-size:11px;">涉及日期：' + esc(b.dates.join(', ')) + '</span>';
+                    }
+                    if (b.actions && b.actions.length) {
+                        html += '<ol style="padding-left:18px;margin-top:4px;">';
+                        b.actions.forEach(function (a) {
+                            html += '<li>' + esc(a) + '</li>';
+                        });
+                        html += '</ol>';
+                    }
+                    html += '</li>';
+                });
+                html += '</ul>';
+                $('#dhRemediation').html(html);
+            }
+            const tb = $('#dhDailyBody');
+            tb.empty();
+            (res.daily || []).forEach(function (row) {
+                const tr = $('<tr></tr>');
+                tr.append($('<td></td>').text(row.date));
+                tr.append($('<td></td>').text(String(row.stock_rows)));
+                tr.append($('<td></td>').text(String(row.etf_rows)));
+                tr.append($('<td></td>').html(row.missing_spot ? '<span class="label label-danger">是</span>' : '—'));
+                tr.append($('<td></td>').html(row.low_stock ? '<span class="label label-warning">是</span>' : '—'));
+                tb.append(tr);
+            });
+            const cli = res.cli_hints || {};
+            $('#dhCliHint').text((cli.validate || '') + ' ； ' + (cli.gaps || ''));
+        }).fail(function (xhr) {
+            let msg = '接口请求失败';
+            try {
+                const j = JSON.parse(xhr.responseText);
+                if (j.error) {
+                    msg = j.error;
+                }
+            } catch (e) {}
+            $('#dhMsg').text(msg);
+        });
+    }
+
+    $('#btnDhRun').on('click', runDataHealth);
+
+    $('#btnDhApply').on('click', function () {
+        const csv = $('#dhMissingCsv').val().trim();
+        if (!csv) {
+            $('#dhMsg').text('当前无缺失日期可填入，请先「检查」。');
+            return;
+        }
+        $('#syncJob').val('basic_data_daily_job');
+        updateHint();
+        $('input[name="dm"][value="list"]').prop('checked', true).trigger('change');
+        $('#dateList').val(csv);
+        $('#runMsg').text('已填入枚举日期，请在下方点击「开始执行」。');
+        document.getElementById('syncJobFormAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    $('#btnDhScroll').on('click', function () {
+        document.getElementById('syncJobFormAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
     loadJobs();
+    initDhDates();
     loadRuns();
     loadCookie();
 })();

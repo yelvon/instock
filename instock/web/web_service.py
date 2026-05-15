@@ -51,6 +51,7 @@ class Application(tornado.web.Application):
             (r"/instock/sync", syncJobHandler.SyncPageHandler),
             (r"/instock/api/sync/jobs", syncJobHandler.SyncJobsApiHandler),
             (r"/instock/api/sync/runs", syncJobHandler.SyncRunsApiHandler),
+            (r"/instock/api/sync/data_health", syncJobHandler.DataHealthApiHandler),
             (r"/instock/api/sync/run_detail", syncJobHandler.SyncRunDetailApiHandler),
             (r"/instock/api/sync/trigger", syncJobHandler.SyncRunPostHandler),
             (r"/instock/api/sync/retry", syncJobHandler.SyncRetryHandler),

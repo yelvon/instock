@@ -39,6 +39,36 @@ class SyncRunsApiHandler(webBase.BaseHandler, ABC):
         self.write(json.dumps({"ok": True, "runs": syncsvc.list_runs(limit)}, ensure_ascii=False))
 
 
+class DataHealthApiHandler(webBase.BaseHandler, ABC):
+    """主数据缺口与行数摘要：GET from=YYYY-MM-DD&to=YYYY-MM-DD（可省略，默认近 60 天）。"""
+
+    def get(self):
+        import datetime
+
+        import instock.web.data_health_service as dhs
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            ds = (self.get_argument("from", "") or "").strip()
+            de = (self.get_argument("to", "") or "").strip()
+            if not ds or not de:
+                end = datetime.date.today()
+                start = end - datetime.timedelta(days=60)
+            else:
+                start = dhs.parse_iso_date(ds)
+                end = dhs.parse_iso_date(de)
+            if start > end:
+                raise ValueError("参数 from 不能晚于 to")
+            rep = dhs.build_report(start, end)
+            self.write(json.dumps(rep, ensure_ascii=False))
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
 class SyncRunDetailApiHandler(webBase.BaseHandler, ABC):
     def get(self):
         syncsvc.init_history()

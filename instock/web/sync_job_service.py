@@ -70,6 +70,13 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "description": "首次部署或换库时执行：CREATE DATABASE（若不存在）、创建关注表等最小表结构。不涉及行情抓取；仅需日期模式选「默认」。",
     },
     {
+        "id": "sync_trade_calendar_job",
+        "script": "sync_trade_calendar_job.py",
+        "title": "同步交易日历",
+        "hint": "写入 trade_calendar 表",
+        "description": "从网络拉取 A 股交易日历并 upsert 到本地表 trade_calendar，供断档检测与质量 H6 使用。建议新库或发现「数据缺口自检」提示日历为空时执行；仅需日期模式选「默认」。",
+    },
+    {
         "id": "basic_data_daily_job",
         "script": "basic_data_daily_job.py",
         "title": "股票/ETF 快照",
@@ -250,7 +257,7 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
     if not os.path.isfile(script_path):
         raise FileNotFoundError(f"找不到脚本: {script_path}")
     cmd = [sys.executable, script_path]
-    if job_id == "init_job":
+    if job_id in ("init_job", "sync_trade_calendar_job"):
         return cmd
     dm = (date_mode or "default").strip().lower()
     if dm == "default":

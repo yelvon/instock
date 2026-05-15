@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import List, Optional, Set, Tuple
+from typing import List, Set, Tuple
 
 import instock.core.tablestructure as tbs
 import instock.core.pipeline.trade_calendar as tcal
@@ -47,6 +47,13 @@ def _expected_trade_dates(
         logging.warning("gaps: trade_calendar 为空且无法拉取交易日历")
         return []
     return sorted(d for d in td if date_from <= d <= date_to)
+
+
+def expected_trade_dates_in_range(
+    date_from: datetime.date, date_to: datetime.date
+) -> List[datetime.date]:
+    """区间内应为交易日的日期列表（与断档检测同源）。"""
+    return _expected_trade_dates(date_from, date_to)
 
 
 def detect_stock_spot_gaps(
