@@ -1,3 +1,12 @@
+# Vue 3 前端（Vite build → instock/web/vue-dist），由 Tornado 提供 /instock/app/
+# 构建上下文须含 stock/instock/web/vue-app（与 docker/build.sh rsync 结果一致）
+FROM docker.io/node:22-bookworm-slim AS vue_build
+WORKDIR /app
+COPY stock/instock/web/vue-app/package.json stock/instock/web/vue-app/package-lock.json ./
+RUN npm ci
+COPY stock/instock/web/vue-app/ ./
+RUN npm run build
+
 # 基础镜像
 # https://hub.docker.com/_/python/tags?page=1&name=3.11-slim-bullseye
 FROM docker.io/python:3.11-slim-bullseye
@@ -58,6 +67,7 @@ trusted-host = mirrors.aliyun.com" > /etc/pip.conf && \
 WORKDIR /data
 #InStock软件
 COPY stock /data/InStock
+COPY --from=vue_build /vue-dist /data/InStock/instock/web/vue-dist
 COPY cron/cron.hourly /etc/cron.hourly
 COPY cron/cron.workdayly /etc/cron.workdayly
 COPY cron/cron.monthly /etc/cron.monthly

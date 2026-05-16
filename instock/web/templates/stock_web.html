@@ -97,10 +97,25 @@
             } else if (c.value === "code") {
                 col.formatter = function (cell) {
                     var row = cell.getRow().getData();
+                    var code = String(row.code || "").trim();
                     var a = document.createElement("a");
                     a.textContent = cell.getValue() == null ? "" : cell.getValue();
-                    a.href = "/instock/data/indicators?code=" + encodeURIComponent(row.code || "") + "&date=" + encodeURIComponent(formatRowDate(row)) + "&name=" + encodeURIComponent(row.name || "");
+                    var cn = code.charAt(0) === "6" ? "SH" + code : "SZ" + code;
+                    a.href = code ? "https://quote.eastmoney.com/" + cn + ".html" : "#";
                     a.target = "_blank";
+                    a.rel = "noopener noreferrer";
+                    a.title = "打开东方财富行情；Ctrl/⌘+点击进本系统指标页";
+                    a.onclick = function (ev) {
+                        if (ev.ctrlKey || ev.metaKey) {
+                            ev.preventDefault();
+                            window.open(
+                                "/instock/data/indicators?code=" + encodeURIComponent(code) +
+                                "&date=" + encodeURIComponent(formatRowDate(row)) +
+                                "&name=" + encodeURIComponent(row.name || ""),
+                                "_blank"
+                            );
+                        }
+                    };
                     return a;
                 };
             }

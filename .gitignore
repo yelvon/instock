@@ -160,3 +160,7 @@ cython_debug/
 cache/
 log/
 test/
+
+# 前端构建产物与依赖（源码在 instock/web/vue-app）
+instock/web/vue-dist/
+instock/web/vue-app/node_modules/

@@ -1,20 +1,23 @@
 #!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
 
-
 import json
 from abc import ABC
 from decimal import Decimal
+from urllib.parse import urlencode
+
 from tornado import gen
-# import logging
 import datetime
 from pymysql.err import ProgrammingError
-import instock.lib.trade_time as trd
-import instock.core.singleton_stock_web_module_data as sswmd
+
+import instock.core.tablestructure as tbs
 import instock.web.base as webBase
 
 __author__ = 'myh '
 __date__ = '2023/3/10 '
+
+_ATTENTION_TABLE = tbs.TABLE_CN_STOCK_ATTENTION['name']
+_MAX_PAGE_SIZE = 2000
 
 
 class MyEncoder(json.JSONEncoder):
@@ -30,22 +33,72 @@ class MyEncoder(json.JSONEncoder):
             return json.JSONEncoder.default(self, obj)
 
 
-# 获得页面数据。
+def _uses_attention_join(web_module_data) -> bool:
+    """原 order_columns 为逐行子查询，大表极慢；改为 LEFT JOIN。"""
+    oc = web_module_data.order_columns or ""
+    return _ATTENTION_TABLE in oc and "SELECT" in oc.upper()
+
+
+def _build_list_sql(web_module_data, date, limit=None, offset=None):
+    """返回 (sql, params)。"""
+    table = web_module_data.table_name
+    params = []
+
+    if _uses_attention_join(web_module_data):
+        sql = (
+            f"SELECT s.*, a.`datetime` AS `cdatetime` "
+            f"FROM `{table}` s "
+            f"LEFT JOIN `{_ATTENTION_TABLE}` a ON a.`code` = s.`code`"
+        )
+        if date is not None:
+            sql += " WHERE s.`date` = %s"
+            params.append(date)
+        if web_module_data.order_by:
+            sql += f" ORDER BY {web_module_data.order_by}"
+    else:
+        order_columns = ""
+        if web_module_data.order_columns is not None:
+            order_columns = f",{web_module_data.order_columns}"
+        sql = f"SELECT *{order_columns} FROM `{table}`"
+        if date is not None:
+            sql += " WHERE `date` = %s"
+            params.append(date)
+        if web_module_data.order_by:
+            sql += f" ORDER BY {web_module_data.order_by}"
+
+    if limit is not None:
+        sql += f" LIMIT {int(limit)} OFFSET {int(offset or 0)}"
+
+    return sql, params
+
+
+def _build_count_sql(web_module_data, date):
+    table = web_module_data.table_name
+    params = []
+    if _uses_attention_join(web_module_data):
+        sql = f"SELECT COUNT(*) AS `cnt` FROM `{table}` s"
+        if date is not None:
+            sql += " WHERE s.`date` = %s"
+            params.append(date)
+    else:
+        sql = f"SELECT COUNT(*) AS `cnt` FROM `{table}`"
+        if date is not None:
+            sql += " WHERE `date` = %s"
+            params.append(date)
+    return sql, params
+
+
+# 经典数据表页 → Vue SPA
 class GetStockHtmlHandler(webBase.BaseHandler, ABC):
     @gen.coroutine
     def get(self):
         name = self.get_argument("table_name", default=None, strip=False)
-        web_module_data = sswmd.stock_web_module_data().get_data(name)
-        run_date, run_date_nph = trd.get_trade_date_last()
-        if web_module_data.is_realtime:
-            date_now_str = run_date_nph.strftime("%Y-%m-%d")
-        else:
-            date_now_str = run_date.strftime("%Y-%m-%d")
-        self.render(
-            "stock_web.html",
-            web_module_data=web_module_data,
-            date_now=date_now_str,
-            leftMenu=webBase.GetLeftMenu(self.request.uri),
+        if not name:
+            self.redirect("/instock/app/table", permanent=False)
+            return
+        self.redirect(
+            "/instock/app/table?" + urlencode({"table_name": name}),
+            permanent=False,
         )
 
 
@@ -54,25 +107,53 @@ class GetStockDataHandler(webBase.BaseHandler, ABC):
     def get(self):
         name = self.get_argument("name", default=None, strip=False)
         date = self.get_argument("date", default=None, strip=False)
+        page_arg = self.get_argument("page", default=None)
+        page_size_arg = self.get_argument("page_size", default=None)
+
+        import instock.core.singleton_stock_web_module_data as sswmd
+
         web_module_data = sswmd.stock_web_module_data().get_data(name)
         self.set_header("Content-Type", "application/json;charset=UTF-8")
 
-        if date is None:
-            where = ""
-        else:
-            where = f" WHERE `date` = %s"
+        use_page = page_size_arg is not None and str(page_size_arg).strip() != ""
+        page_size = None
+        page = 1
+        if use_page:
+            try:
+                page_size = min(max(int(page_size_arg), 1), _MAX_PAGE_SIZE)
+                page = max(int(page_arg or 1), 1)
+            except (TypeError, ValueError):
+                self.set_status(400)
+                self.write(json.dumps({"ok": False, "error": "page / page_size 参数无效"}, ensure_ascii=False))
+                return
 
-        order_by = ""
-        if web_module_data.order_by is not None:
-            order_by = f" ORDER BY {web_module_data.order_by}"
-
-        order_columns = ""
-        if web_module_data.order_columns is not None:
-            order_columns = f",{web_module_data.order_columns}"
-
-        sql = f" SELECT *{order_columns} FROM `{web_module_data.table_name}`{where}{order_by}"
         try:
-            data = self.db.query(sql, date)
+            if use_page:
+                count_sql, count_params = _build_count_sql(web_module_data, date)
+                count_row = self.db.get(count_sql, *count_params)
+                total = int(count_row["cnt"]) if count_row else 0
+                offset = (page - 1) * page_size
+                list_sql, list_params = _build_list_sql(
+                    web_module_data, date, limit=page_size, offset=offset
+                )
+                data = self.db.query(list_sql, *list_params)
+                self.write(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "total": total,
+                            "page": page,
+                            "page_size": page_size,
+                            "rows": data,
+                        },
+                        cls=MyEncoder,
+                        ensure_ascii=False,
+                    )
+                )
+                return
+
+            list_sql, list_params = _build_list_sql(web_module_data, date)
+            data = self.db.query(list_sql, *list_params)
         except ProgrammingError as e:
             if e.args and e.args[0] == 1146:
                 self.set_status(404)
@@ -88,4 +169,4 @@ class GetStockDataHandler(webBase.BaseHandler, ABC):
                 return
             raise
 
-        self.write(json.dumps(data, cls=MyEncoder))
+        self.write(json.dumps(data, cls=MyEncoder, ensure_ascii=False))

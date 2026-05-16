@@ -23,16 +23,21 @@ logging.basicConfig(format='%(asctime)s %(message)s', filename=os.path.join(log_
 logging.getLogger().setLevel(logging.ERROR)
 import instock.lib.torndb as torndb
 import instock.lib.database as mdb
-import instock.lib.version as version
 import instock.web.dataTableHandler as dataTableHandler
 import instock.web.dataIndicatorsHandler as dataIndicatorsHandler
 import instock.web.sync_job_handler as syncJobHandler
 import instock.web.base as webBase
 import instock.web.sync_job_service as syncJobService
 import instock.web.scheduler_service as schedulerService
+import instock.web.vue_spa_handler as vueSpaHandler
+import instock.web.nav_api_handler as navApiHandler
+import instock.web.table_meta_handler as tableMetaHandler
+import tornado.web
 
 __author__ = 'myh '
 __date__ = '2023/3/10 '
+
+_VUE_ASSETS = os.path.join(vueSpaHandler.VUE_DIST, "assets")
 
 
 class Application(tornado.web.Application):
@@ -60,6 +65,11 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/cookie", syncJobHandler.SyncCookieApiHandler),
             (r"/instock/api/sync/prefs", syncJobHandler.SyncPrefsApiHandler),
             (r"/instock/api/sync/scheduler", syncJobHandler.SchedulerConfigApiHandler),
+            (r"/instock/api/nav", navApiHandler.NavApiHandler),
+            (r"/instock/api/table_meta", tableMetaHandler.TableMetaHandler),
+            (r"/instock/api/kline_bundle", tableMetaHandler.KlineBundleApiHandler),
+            (r"/instock/app/assets/(.*)", tornado.web.StaticFileHandler, {"path": _VUE_ASSETS}),
+            (r"/instock/app/?(.*)", vueSpaHandler.VueIndexHandler),
         ]
         settings = dict(  # 配置
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
@@ -75,13 +85,11 @@ class Application(tornado.web.Application):
         syncJobService.init_history()
 
 
-# 首页handler。
+# 首页 → Vue SPA
 class HomeHandler(webBase.BaseHandler, ABC):
     @gen.coroutine
     def get(self):
-        self.render("index.html",
-                    stockVersion=version.__version__,
-                    leftMenu=webBase.GetLeftMenu(self.request.uri))
+        self.redirect("/instock/app/home", permanent=False)
 
 
 def main():

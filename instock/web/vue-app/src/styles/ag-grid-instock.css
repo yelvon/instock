@@ -1,0 +1,126 @@
+/* InStock 数据表：高对比暗色，避免单元格文字发灰发黑 */
+.ag-theme-quartz-dark.ag-grid-instock,
+.ag-theme-quartz-dark.ag-grid-instock .ag-root-wrapper {
+  --ag-background-color: #161c24;
+  --ag-foreground-color: #f0f4f9;
+  --ag-data-color: #f0f4f9;
+  --ag-secondary-foreground-color: #b8c5d6;
+  --ag-header-background-color: #0f1419;
+  --ag-header-foreground-color: #f0f4f9;
+  --ag-odd-row-background-color: #1c2430;
+  --ag-border-color: #3d4f63;
+  --ag-secondary-border-color: #2f3d4d;
+  --ag-row-hover-color: rgba(64, 158, 255, 0.18);
+  --ag-selected-row-background-color: rgba(64, 158, 255, 0.24);
+  --ag-active-color: #69b1ff;
+  --ag-input-background-color: #232d3b;
+  --ag-input-border-color: #4a5d73;
+  --ag-checkbox-background-color: #232d3b;
+  --ag-icon-font-color: #c5d0de;
+  --ag-font-size: 14px;
+  --ag-grid-size: 6px;
+  --ag-wrapper-border-radius: 8px;
+  --ag-card-shadow: none;
+  color-scheme: dark;
+}
+
+.ag-grid-instock .ag-root-wrapper {
+  border: 1px solid var(--ag-border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ag-grid-instock .ag-header {
+  border-bottom: 1px solid var(--ag-border-color);
+}
+
+.ag-grid-instock .ag-header-cell,
+.ag-grid-instock .ag-header-group-cell {
+  font-weight: 600;
+}
+
+.ag-grid-instock .ag-header-cell-label,
+.ag-grid-instock .ag-header-cell-text {
+  color: #f0f4f9;
+}
+
+.ag-grid-instock .ag-floating-filter {
+  background-color: #1a222c;
+}
+
+.ag-grid-instock .ag-floating-filter-body,
+.ag-grid-instock .ag-floating-filter-input,
+.ag-grid-instock .ag-text-field-input {
+  color: #f0f4f9;
+  background-color: #232d3b;
+  border-radius: 4px;
+}
+
+.ag-grid-instock .ag-floating-filter-input input,
+.ag-grid-instock .ag-text-field-input {
+  color: #f0f4f9;
+}
+
+.ag-grid-instock .ag-floating-filter-input input::placeholder,
+.ag-grid-instock .ag-text-field-input::placeholder {
+  color: #8fa3b8;
+  opacity: 1;
+}
+
+.ag-grid-instock .ag-row {
+  background-color: var(--ag-background-color);
+  border-bottom: 1px solid rgba(61, 79, 99, 0.55);
+  color: var(--ag-data-color);
+}
+
+.ag-grid-instock .ag-row-odd {
+  background-color: var(--ag-odd-row-background-color);
+}
+
+.ag-grid-instock .ag-cell {
+  color: #f0f4f9;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ag-grid-instock .ag-cell-value {
+  color: inherit;
+}
+
+.ag-grid-instock .ag-row-hover:not(.ag-row-selected)::before {
+  background-color: var(--ag-row-hover-color);
+}
+
+.ag-grid-instock .ag-pinned-left-header,
+.ag-grid-instock .ag-pinned-left-cols-container {
+  background-color: #131920;
+  border-right: 1px solid var(--ag-border-color);
+}
+
+.ag-grid-instock .ag-pinned-left-cols-container .ag-cell {
+  color: #f0f4f9;
+}
+
+.ag-grid-instock .ag-pinned-left-cols-container .ag-row-odd {
+  background-color: #1a222c;
+}
+
+.ag-grid-instock .ag-cell-focus:not(.ag-cell-range-selected) {
+  border-color: var(--ag-active-color) !important;
+}
+
+.ag-grid-instock .ag-icon {
+  color: #b8c5d6;
+}
+
+/* 筛选菜单、下拉 */
+.ag-grid-instock .ag-popup-child,
+.ag-grid-instock .ag-menu {
+  background-color: #1e2836;
+  color: #f0f4f9;
+}
+
+.ag-grid-instock .ag-menu-option-active {
+  background-color: rgba(64, 158, 255, 0.2);
+}

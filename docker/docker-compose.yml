@@ -9,6 +9,8 @@
 #
 # 说明：MariaDB 数据目录必须为 /var/lib/mysql；勿再挂到 /var/lib/instockdb，否则数据会进匿名卷。
 # 网络名 InStockService、容器名与 deployment.md 中 docker run 示例一致。
+# 该网络声明为 external，避免与历史上「docker network create」创建的无 Compose 标签的同名网桥冲突。
+# 若本机尚无此网络，请先执行：docker network create InStockService
 
 services:
   instockdbservice:
@@ -50,4 +52,4 @@ services:
 networks:
   instock_net:
     name: InStockService
-    driver: bridge
+    external: true

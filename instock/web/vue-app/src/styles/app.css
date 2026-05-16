@@ -1,0 +1,14 @@
+/* 与 Element Plus 暗色变量对齐的全局补充 */
+:root {
+  --instock-aside-bg: #0f1419;
+  --instock-aside-border: #1f2a36;
+  --instock-card-bg: var(--el-bg-color);
+  --instock-muted: var(--el-text-color-secondary);
+}
+
+html.dark,
+html {
+  color-scheme: dark;
+}
+
+/* AG Grid 细表样式见 ag-grid-instock.css（DataTableView 使用 .ag-grid-instock） */

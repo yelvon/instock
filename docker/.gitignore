@@ -159,3 +159,7 @@ cython_debug/
 
 docker.*
 /cookie.txt
+
+# build.sh 生成的 Docker 构建上下文，勿提交（内含 node_modules 副本等）
+/stock/
+/cron/

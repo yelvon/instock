@@ -13,12 +13,11 @@ __date__ = "2026/4/30 "
 
 
 class SyncPageHandler(webBase.BaseHandler, ABC):
+    """旧地址重定向到 Vue SPA（保留书签与外链）。"""
+
     def get(self):
         syncsvc.init_history()
-        self.render(
-            "sync.html",
-            leftMenu=webBase.GetLeftMenu(self.request.uri),
-        )
+        self.redirect("/instock/app/sync", permanent=False)
 
 
 class SyncJobsApiHandler(webBase.BaseHandler, ABC):
