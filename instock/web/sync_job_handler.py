@@ -356,6 +356,111 @@ class SyncPrefsApiHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 
 
+class DataBatchesApiHandler(webBase.BaseHandler, ABC):
+    """GET /instock/api/sync/data_batches?domain_id=&limit=50"""
+
+    def get(self):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            from instock.core.data.lineage import list_batches
+
+            domain_id = (self.get_argument("domain_id", "") or "").strip() or None
+            try:
+                limit = int(self.get_argument("limit", "50"))
+            except ValueError:
+                limit = 50
+            try:
+                offset = int(self.get_argument("offset", "0"))
+            except ValueError:
+                offset = 0
+            items = list_batches(domain_id=domain_id, limit=limit, offset=offset)
+            self.write(
+                json.dumps(
+                    {"ok": True, "batches": items, "count": len(items)},
+                    ensure_ascii=False,
+                )
+            )
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class DataGovernanceEnvApiHandler(webBase.BaseHandler, ABC):
+    """GET 当前进程数据治理相关环境（只读）。"""
+
+    def get(self):
+        import os
+
+        from instock.core.data.profile import (
+            effective_bar_mode,
+            effective_data_profile,
+            tencent_enrich_enabled,
+            tdx_dir,
+        )
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        tdx = tdx_dir()
+        self.write(
+            json.dumps(
+                {
+                    "ok": True,
+                    "env": {
+                        "INSTOCK_DATA_PROFILE": effective_data_profile(),
+                        "INSTOCK_BAR_MODE": effective_bar_mode(),
+                        "INSTOCK_TENCENT_ENRICH": "1" if tencent_enrich_enabled() else "0",
+                        "INSTOCK_USE_DATA_REGISTRY": os.environ.get(
+                            "INSTOCK_USE_DATA_REGISTRY", "0"
+                        ),
+                        "INSTOCK_TDX_DIR": tdx or "",
+                        "INSTOCK_SPOT_DATA_SOURCE": os.environ.get(
+                            "INSTOCK_SPOT_DATA_SOURCE", ""
+                        ),
+                        "tdx_configured": bool(tdx),
+                    },
+                    "hint": "修改需在 Docker Compose environment 或 .env 中配置后重启 InStock 容器",
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class DataSourcesApiHandler(webBase.BaseHandler, ABC):
+    """GET 多源 Registry 状态；POST body {provider_id, code?} 触发连通性检测。"""
+
+    def get(self):
+        import instock.web.data_sources_service as dss
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            self.write(json.dumps(dss.build_report(), ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+    def post(self):
+        import instock.web.data_sources_service as dss
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        pid = (body.get("provider_id") or "").strip()
+        code = (body.get("code") or "600000").strip()
+        if not pid:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 provider_id"}, ensure_ascii=False))
+            return
+        try:
+            out = dss.verify_provider(pid, code)
+            self.write(json.dumps(out, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
 class SchedulerConfigApiHandler(webBase.BaseHandler, ABC):
     """应用内定时任务配置（触发记录见下方「执行记录」，trigger_source=scheduler）。"""
 

@@ -196,3 +196,13 @@ def validate_spot_after_daily_jobs(trade_date: datetime.date) -> List[Validation
 
 def any_hard_fail(results: List[ValidationResult]) -> bool:
     return any(not r.skipped and not r.ok for r in results)
+
+
+def validate_backtest_domain_gaps(
+    date_from: datetime.date, date_to: datetime.date
+) -> Dict[str, Any]:
+    """按域汇总回测主数据缺口（仅报告，不阻断 job）。"""
+    from instock.core.pipeline.backtest_data_prerequisites import detect_all_backtest_domain_gaps
+
+    report = detect_all_backtest_domain_gaps(date_from, date_to)
+    return report.to_dict()

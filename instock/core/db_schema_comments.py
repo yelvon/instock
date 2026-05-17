@@ -66,6 +66,25 @@ def collect_table_definitions() -> List[Tuple[str, str, Dict[str, Dict[str, Any]
         "is_open": {"cn": "是否交易日(1是0否)"},
         "synced_at": {"cn": "同步时间"},
     })
+    add("data_batch", "回测数据入库批次血缘", {
+        "batch_id": {"cn": "批次唯一ID(UUID)"},
+        "domain_id": {"cn": "数据域ID"},
+        "trade_date": {"cn": "业务交易日"},
+        "date_from": {"cn": "K线区间起始日"},
+        "date_to": {"cn": "K线区间结束日"},
+        "scope_type": {"cn": "范围类型(market/code/table)"},
+        "scope_key": {"cn": "范围标识"},
+        "row_count": {"cn": "本批次写入行数"},
+        "source_provider": {"cn": "主链数据源provider_id"},
+        "enrich_providers": {"cn": "enrich源列表JSON"},
+        "mixed_source": {"cn": "是否混源(0否1是)"},
+        "adjust_type": {"cn": "复权口径raw/qfq/hfq"},
+        "profile": {"cn": "数据配置档live/backtest"},
+        "input_batches": {"cn": "上游依赖batch_id列表"},
+        "status": {"cn": "批次状态success/failed/partial"},
+        "job_id": {"cn": "触发写入的作业ID"},
+        "created_at": {"cn": "记录创建时间"},
+    })
 
     seen = set()
     dedup: List[Tuple[str, str, Dict[str, Dict[str, Any]]]] = []

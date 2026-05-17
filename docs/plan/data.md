@@ -25,6 +25,8 @@
 3. **主数据层（Core）**：面向查询的规范化表（如 `cn_stock_spot`、`cn_etf_spot` 等），带主键/唯一索引。
 4. **衍生层（Derived）**：指标、形态、选股结果、回测输入；**严格依赖**主数据层某 `batch_id` 或 `data_version` 完成后再跑。
 
+**数据域与多源治理**（回测主线）：见 [`data-domains.md`](data-domains.md)；配置 [`instock/core/data/registry.yaml`](../instock/core/data/registry.yaml)；入库批次表 `data_batch`（`migrations/001_data_batch.sql`）。
+
 ```mermaid
 flowchart LR
   subgraph ingest [采集层]

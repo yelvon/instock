@@ -62,9 +62,25 @@
 - 随机过程（若有）固定种子。
 - 每次回测记录：代码版本、依赖版本、数据日期范围、数据快照标识或数据版本号、策略参数哈希。
 
+**数据侧复现清单（本期，无回测引擎）**
+
+回测前应能回答：
+
+| 问题 | 来源 |
+|------|------|
+| 区间用了哪次 spot 入库？ | `data_batch`（`domain_id=daily_spot_snapshot`） |
+| K 线来自哪条 provider？ | `data_batch`（`daily_bar_raw`，`adjust_type=raw`） |
+| 是否混源 / 腾讯 enrich？ | `mixed_source`、`enrich_providers` |
+| 缺哪些交易日？ | `scripts/check_backtest_data.py` / `backtest_data_prerequisites` |
+
+环境建议：`INSTOCK_DATA_PROFILE=backtest`，`INSTOCK_BAR_MODE=raw`，`INSTOCK_TENCENT_ENRICH=0`，配置 `INSTOCK_TDX_DIR` 时 K 线优先 `mootdx_local`。
+
+详见 [`data-domains.md`](data-domains.md)、[`data.md`](data.md) 血缘章节。
+
 **验收建议**
 
 - 同一机器上连续两次相同参数回测，核心输出（权益曲线、成交列表）一致。
+- 跑完 `basic_data_daily_job` 后 `SELECT * FROM data_batch WHERE domain_id='daily_spot_snapshot' ORDER BY created_at DESC LIMIT 1` 有记录。
 
 ---
 

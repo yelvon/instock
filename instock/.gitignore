@@ -158,6 +158,7 @@ cython_debug/
 .idea/
 
 cache/
-data/
+# 仅忽略包根下运行时 data/，勿用 data/（会误伤 core/data 源码包）
+/data/
 log/
 proxy/

@@ -112,11 +112,39 @@ def fetch_etfs(date, spot_source=None):
     return None
 
 
+def _use_data_registry() -> bool:
+    return os.environ.get("INSTOCK_USE_DATA_REGISTRY", "0").strip() in ("1", "true", "yes")
+
+
+def _fetch_stocks_via_registry(date, spot_source=None):
+    """经 DataRegistry 拉 spot（live/backtest profile + enrich）。"""
+    try:
+        from instock.core.data.registry import get_registry
+
+        td = date
+        if td is not None and hasattr(td, "date"):
+            td = td.date()
+        elif td is None:
+            td = datetime.date.today()
+        if spot_source:
+            os.environ["INSTOCK_SPOT_DATA_SOURCE"] = spot_src.normalize_spot_source(spot_source)
+        res = get_registry().fetch_domain("daily_spot_snapshot", trade_date=td)
+        if res.ok and res.data is not None and not res.data.empty:
+            return res.data
+    except Exception as e:
+        logging.warning("stockfetch._fetch_stocks_via_registry: %s", e)
+    return None
+
+
 # 读取当天股票数据
 def fetch_stocks(date, spot_source=None):
     """
     :param spot_source: ``eastmoney`` | ``baostock`` | ``auto``；默认读 ``INSTOCK_SPOT_DATA_SOURCE``（未设则为东财）。
     """
+    if _use_data_registry():
+        data = _fetch_stocks_via_registry(date, spot_source)
+        if data is not None:
+            return data
     try:
         mode = spot_src.effective_spot_source(spot_source)
         data = None
@@ -414,28 +442,75 @@ def stock_hist_cache(code, date_start, date_end=None, is_cache=True, adjust=''):
             os.makedirs(cache_dir)
     except Exception:
         pass
-    cache_file = os.path.join(cache_dir, "%s%s.gzip.pickle" % (code, adjust))
+    cache_suffix = adjust if adjust else "raw"
+    cache_file = os.path.join(cache_dir, "%s%s.gzip.pickle" % (code, cache_suffix))
     # 如果缓存存在就直接返回缓存数据。压缩方式。
     try:
         if os.path.isfile(cache_file):
             return pd.read_pickle(cache_file, compression="gzip")
         else:
-            if date_end is not None:
-                stock = she.stock_zh_a_hist(symbol=code, period="daily", start_date=date_start, end_date=date_end,
-                                            adjust=adjust)
-            else:
-                stock = she.stock_zh_a_hist(symbol=code, period="daily", start_date=date_start, adjust=adjust)
+            stock = None
+            provider_used = "eastmoney"
+            use_reg = _use_data_registry() or os.environ.get("INSTOCK_BAR_MODE", "raw").strip().lower() == "raw"
+            if use_reg and (not adjust or adjust in ("", "raw")):
+                try:
+                    from instock.core.data.registry import get_registry
+                    from instock.core.data.lineage import record_batch
+
+                    res = get_registry().fetch_domain(
+                        "daily_bar_raw",
+                        code=code,
+                        date_from=date_start,
+                        date_to=date_end,
+                    )
+                    if res.ok and res.data is not None and not res.data.empty:
+                        stock = res.data.copy()
+                        if not isinstance(stock.index, pd.DatetimeIndex) and "date" in stock.columns:
+                            stock = stock.set_index("date")
+                        provider_used = res.provider_id or "registry"
+                        if is_cache:
+                            try:
+                                stock.to_pickle(cache_file, compression="gzip")
+                            except Exception:
+                                pass
+                            try:
+                                res.domain_id = "daily_bar_raw"
+                                res.scope_type = "code"
+                                res.scope_key = code
+                                res.metadata.setdefault("adjust_type", "raw")
+                                record_batch(res, job_id="stock_hist_cache")
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logging.warning("stock_hist_cache registry: %s", e)
+            if stock is None:
+                em_adj = adjust if adjust else ("qfq" if not use_reg else "")
+                if date_end is not None:
+                    stock = she.stock_zh_a_hist(
+                        symbol=code,
+                        period="daily",
+                        start_date=date_start,
+                        end_date=date_end,
+                        adjust=em_adj,
+                    )
+                else:
+                    stock = she.stock_zh_a_hist(
+                        symbol=code,
+                        period="daily",
+                        start_date=date_start,
+                        adjust=em_adj,
+                    )
+                provider_used = "eastmoney"
 
             if stock is None or len(stock.index) == 0:
                 return None
             stock.columns = tuple(tbs.CN_STOCK_HIST_DATA['columns'])
             stock = stock.sort_index()  # 将数据按照日期排序下。
             try:
-                if is_cache:
+                if is_cache and provider_used == "eastmoney":
                     stock.to_pickle(cache_file, compression="gzip")
             except Exception:
                 pass
-            # time.sleep(1)
             return stock
     except Exception as e:
         logging.error(f"stockfetch.stock_hist_cache处理异常：{code}代码{e}")

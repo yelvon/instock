@@ -182,6 +182,29 @@ def _progress_meta(merged_out: str) -> Tuple[int, int, int, str, str, int, int]:
     return nbytes, nlines, err_count, tail_err, progress_hint, cur, total
 
 
+def _collect_batch_ids_for_job(job_id: str) -> List[str]:
+    """作业成功后附加最近 data_batch id（轻量可观测）。"""
+    try:
+        from instock.core.data.lineage import latest_batch_id
+
+        bids: List[str] = []
+        if job_id == "basic_data_daily_job":
+            b = latest_batch_id("daily_spot_snapshot")
+            if b:
+                bids.append(b)
+        elif job_id == "indicators_data_daily_job":
+            b = latest_batch_id("derived_indicators")
+            if b:
+                bids.append(b)
+        elif job_id == "sync_trade_calendar_job":
+            b = latest_batch_id("trade_calendar")
+            if b:
+                bids.append(b)
+        return bids
+    except Exception:
+        return []
+
+
 def _verify_spot_dates_after_run(date_list_csv: str) -> Dict[str, Any]:
     """补数完成后核对枚举日期是否已写入 cn_stock_spot。"""
     import instock.lib.database as mdb
@@ -229,6 +252,7 @@ def _load() -> None:
                     item.setdefault("progress_current", 0)
                     item.setdefault("progress_total", 0)
                     item.setdefault("post_verify", None)
+                    item.setdefault("batch_ids", [])
                     _RUNS[rid] = item
                     _ORDER.append(rid)
     except Exception:
@@ -567,6 +591,8 @@ def _worker(run_id: str) -> None:
                         + ("…" if len(still) > 15 else "")
                     )
             r["status"] = status
+            if status == "success":
+                r["batch_ids"] = _collect_batch_ids_for_job(r.get("job_id") or "")
 
             if proc is None and start_exc is not None:
                 r["error_message"] = str(start_exc)
@@ -633,6 +659,7 @@ def start_job(
         "progress_current": 0,
         "progress_total": 0,
         "post_verify": None,
+        "batch_ids": [],
     }
     with _LOCK:
         _RUNS[run_id] = rec

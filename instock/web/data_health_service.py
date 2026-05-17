@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 import instock.core.tablestructure as tbs
 import instock.core.pipeline.gaps as gaps
+import instock.core.pipeline.backtest_data_prerequisites as bdp
 import instock.core.pipeline.trade_calendar as tcal
 import instock.lib.database as mdb
 
@@ -109,6 +110,15 @@ def build_report(date_from: datetime.date, date_to: datetime.date) -> Dict[str, 
             }
         )
 
+    bt_report = bdp.check_backtest_data(date_from, date_to)
+    recent_batches: List[Dict[str, Any]] = []
+    try:
+        from instock.core.data.lineage import list_recent_batches
+
+        recent_batches = list_recent_batches(limit=8)
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "date_from": date_from.isoformat(),
@@ -119,9 +129,13 @@ def build_report(date_from: datetime.date, date_to: datetime.date) -> Dict[str, 
         "extra_spot_dates": [d.isoformat() for d in extra],
         "daily": daily,
         "remediation": remediation,
+        "backtest_prerequisites_ok": bt_report.ok,
+        "backtest_prerequisites": bt_report.to_dict(),
+        "recent_data_batches": recent_batches,
         "cli_hints": {
             "validate": "PYTHONPATH=. python3 scripts/validate_daily.py --date YYYY-MM-DD",
             "gaps": "PYTHONPATH=. python3 scripts/detect_gaps.py --from-date YYYY-MM-DD --to-date YYYY-MM-DD",
+            "backtest_check": "PYTHONPATH=. python3 scripts/check_backtest_data.py --from-date YYYY-MM-DD --to-date YYYY-MM-DD",
         },
     }
 

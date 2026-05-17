@@ -716,7 +716,7 @@ onUnmounted(() => stopPoll());
 <template>
   <PageShell
     title="数据同步"
-    subtitle="触发 instock/job 脚本；长任务自动轮询进度。定时任务在下方配置后由 Web 进程每分钟检查，执行记录中带「【定时】」前缀。"
+    subtitle="Cookie、缺口快检与快照偏好。定时任务、执行记录与 data_batch 血缘请使用侧栏「任务中心」。"
   >
     <div class="sync-page">
     <el-card shadow="never" class="block">
@@ -874,9 +874,21 @@ onUnmounted(() => stopPoll());
           <el-input v-model="dateList" placeholder="2024-06-01,2024-06-03" />
         </el-form-item>
         <el-form-item v-if="dateMode === 'range'" label="区间">
-          <el-space>
-            <el-input v-model="dateStart" placeholder="开始 YYYY-MM-DD" style="width: 180px" />
-            <el-input v-model="dateEnd" placeholder="结束" style="width: 180px" />
+          <el-space wrap>
+            <el-date-picker
+              v-model="dateStart"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="开始"
+              style="width: 180px"
+            />
+            <el-date-picker
+              v-model="dateEnd"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="结束"
+              style="width: 180px"
+            />
           </el-space>
         </el-form-item>
         <el-form-item>

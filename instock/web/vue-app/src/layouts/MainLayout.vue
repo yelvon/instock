@@ -6,6 +6,7 @@ import {
   Download,
   DataLine,
   Histogram,
+  Timer,
 } from "@element-plus/icons-vue";
 
 const route = useRoute();
@@ -86,6 +87,10 @@ function onMenuSelect(index: string) {
     void router.push("/sync");
     return;
   }
+  if (index === "/jobs") {
+    void router.push("/jobs");
+    return;
+  }
   if (index === "/backtest") {
     void router.push("/backtest");
     return;
@@ -121,6 +126,10 @@ function onMenuSelect(index: string) {
           <el-menu-item index="/sync">
             <el-icon><Download /></el-icon>
             <span>数据同步</span>
+          </el-menu-item>
+          <el-menu-item index="/jobs">
+            <el-icon><Timer /></el-icon>
+            <span>任务中心</span>
           </el-menu-item>
           <el-menu-item index="/backtest">
             <el-icon><Histogram /></el-icon>

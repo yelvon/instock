@@ -75,6 +75,26 @@ def _write_stock_spot(date) -> int:
 
     mdb.insert_db_from_df(data, table_name, cols_type, False, "`date`,`code`")
     n = len(data.index)
+    try:
+        import instock.core.spot_source as spot_src
+        from instock.core.data.lineage import record_batch
+        from instock.core.data.provider import FetchResult
+
+        td = date.date() if hasattr(date, "date") else date
+        record_batch(
+            FetchResult(
+                ok=True,
+                data=data,
+                domain_id="daily_spot_snapshot",
+                trade_date=td,
+                provider_id=spot_src.effective_spot_source(),
+                scope_type="market",
+                scope_key="cn_stock_spot",
+            ),
+            job_id="basic_data_daily_job",
+        )
+    except Exception as e:
+        logging.warning("basic_data_daily_job: record_batch 跳过: %s", e)
     print(f"[PROGRESS] {_date_str(date)} stock rows={n}", flush=True)
     return n
 

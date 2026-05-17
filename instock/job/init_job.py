@@ -81,6 +81,12 @@ def main():
                 "init_job: COMMENT 同步失败（可手动执行 scripts/apply_table_comments.py）：%s",
                 e,
             )
+    try:
+        from instock.core.data.lineage import ensure_data_batch_table
+
+        ensure_data_batch_table()
+    except Exception as e:
+        logging.error(f"init_job: data_batch 建表异常：{e}")
     # 执行数据初始化。
 
 

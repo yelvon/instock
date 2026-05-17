@@ -33,6 +33,12 @@ const router = createRouter({
           meta: { title: "数据同步" },
         },
         {
+          path: "jobs",
+          name: "jobs",
+          component: () => import("@/views/JobCenterView.vue"),
+          meta: { title: "任务中心" },
+        },
+        {
           path: "table",
           name: "table",
           component: () => import("@/features/table/DataTableView.vue"),

@@ -19,6 +19,23 @@ def main():
     tc.ensure_table()
     n = tc.sync_from_network()
     logging.info("sync_trade_calendar_job: 已同步交易日条数约 %s（含 ON DUPLICATE 更新）", n)
+    try:
+        from instock.core.data.lineage import record_batch
+        from instock.core.data.provider import FetchResult
+
+        record_batch(
+            FetchResult(
+                ok=True,
+                domain_id="trade_calendar",
+                provider_id="sina_trade_date",
+                scope_type="table",
+                scope_key=tc.TABLE_NAME,
+                metadata={"row_synced": n},
+            ),
+            job_id="sync_trade_calendar_job",
+        )
+    except Exception as e:
+        logging.warning("sync_trade_calendar_job record_batch: %s", e)
 
 
 if __name__ == "__main__":

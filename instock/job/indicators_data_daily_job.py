@@ -53,6 +53,26 @@ def prepare(date):
         if date.strftime("%Y-%m-%d") != data.iloc[0]['date']:
             data['date'] = date_str
         mdb.insert_db_from_df(data, table_name, cols_type, False, "`date`,`code`")
+        try:
+            from instock.core.data.lineage import latest_batch_id, record_batch
+            from instock.core.data.provider import FetchResult
+
+            spot_bid = latest_batch_id("daily_spot_snapshot", date)
+            record_batch(
+                FetchResult(
+                    ok=True,
+                    domain_id="derived_indicators",
+                    trade_date=date,
+                    provider_id="local_compute",
+                    scope_type="table",
+                    scope_key=table_name,
+                    data=data,
+                ),
+                job_id="indicators_data_daily_job",
+                input_batches=[spot_bid] if spot_bid else None,
+            )
+        except Exception as le:
+            logging.warning("indicators_data_daily_job: record_batch: %s", le)
 
     except Exception as e:
         logging.error(f"indicators_data_daily_job.prepare处理异常：{e}")

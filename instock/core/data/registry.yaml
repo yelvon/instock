@@ -1,0 +1,90 @@
+schema_version: 1
+
+providers:
+  eastmoney:
+    module: instock.core.data.providers.eastmoney
+    capabilities:
+      - daily_spot_snapshot
+      - daily_bar
+  baostock:
+    module: instock.core.data.providers.baostock
+    capabilities:
+      - daily_spot_snapshot
+  mootdx_local:
+    module: instock.core.data.providers.mootdx_local
+    requires_env:
+      - INSTOCK_TDX_DIR
+    capabilities:
+      - daily_bar_raw
+      - daily_bar
+      - daily_spot_snapshot_partial
+  mootdx_online:
+    module: instock.core.data.providers.mootdx_online
+    capabilities:
+      - daily_bar_raw
+      - daily_bar
+      - daily_spot_snapshot_partial
+  tencent:
+    module: instock.core.data.providers.tencent
+    capabilities:
+      - spot_valuation_enrich
+      - daily_spot_snapshot_partial
+
+domains:
+  daily_spot_snapshot:
+    natural_key: [date, code]
+    profiles:
+      backtest:
+        chain:
+          - provider: eastmoney
+            strict: true
+        enrich: []
+      live:
+        chain:
+          - provider: eastmoney
+            strict: false
+          - provider: mootdx_online
+            fill_mode: price_volume_only
+            strict: false
+          - provider: baostock
+            strict: false
+        enrich:
+          - provider: tencent
+            mode: valuation_only
+
+  daily_bar_raw:
+    natural_key: [code, date]
+    profiles:
+      backtest:
+        chain:
+          - provider: mootdx_local
+            strict: true
+            when: tdx_dir_set
+          - provider: mootdx_online
+            strict: true
+          - provider: eastmoney
+            strict: true
+      live:
+        chain:
+          - provider: mootdx_local
+            when: tdx_dir_set
+          - provider: mootdx_online
+            strict: false
+          - provider: eastmoney
+            strict: false
+
+  trade_calendar:
+    natural_key: [cal_date]
+    profiles:
+      backtest:
+        chain: []
+      live:
+        chain: []
+
+  derived_indicators:
+    natural_key: [date, code]
+    profiles:
+      backtest:
+        chain: []
+      live:
+        chain: []
