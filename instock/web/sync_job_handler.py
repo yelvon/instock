@@ -115,6 +115,34 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 
 
+class SyncCancelHandler(webBase.BaseHandler, ABC):
+    """POST /instock/api/sync/cancel  body: { "run_id": "..." }"""
+
+    def post(self):
+        syncsvc.init_history()
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        run_id = (body.get("run_id") or body.get("id") or "").strip()
+        if not run_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 run_id"}, ensure_ascii=False))
+            return
+        try:
+            rec = syncsvc.cancel_run(run_id)
+            self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
 class SyncRetryHandler(webBase.BaseHandler, ABC):
     def post(self):
         syncsvc.init_history()
@@ -156,11 +184,89 @@ class SyncDeleteRunHandler(webBase.BaseHandler, ABC):
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
             return
-        if syncsvc.delete_run(run_id):
-            self.write(json.dumps({"ok": True}, ensure_ascii=False))
+        try:
+            ok, freed = syncsvc.delete_run(run_id)
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+            return
+        if ok:
+            self.write(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "freed_bytes": freed,
+                        "history_bytes": syncsvc.history_file_bytes(),
+                    },
+                    ensure_ascii=False,
+                )
+            )
         else:
             self.set_status(404)
             self.write(json.dumps({"ok": False, "error": "记录不存在"}, ensure_ascii=False))
+
+
+class SyncDeleteRunsHandler(webBase.BaseHandler, ABC):
+    """POST /instock/api/sync/delete_runs
+    body: { "ids": ["uuid", ...] } 或 { "mode": "all_finished" }
+    """
+
+    def post(self):
+        syncsvc.init_history()
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        mode = (body.get("mode") or "").strip().lower()
+        try:
+            if mode == "all_finished":
+                stat = syncsvc.delete_all_finished_runs()
+            else:
+                ids = body.get("ids")
+                if not isinstance(ids, list) or not ids:
+                    self.set_status(400)
+                    self.write(
+                        json.dumps(
+                            {"ok": False, "error": "请提供 ids 数组，或 mode=all_finished"},
+                            ensure_ascii=False,
+                        )
+                    )
+                    return
+                stat = syncsvc.delete_runs(ids)
+            stat["ok"] = True
+            self.write(json.dumps(stat, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class SyncPruneRunsHandler(webBase.BaseHandler, ABC):
+    """POST /instock/api/sync/prune_runs  body: { "keep_last": 50 }"""
+
+    def post(self):
+        syncsvc.init_history()
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        try:
+            keep = int(body.get("keep_last") or 50)
+        except (TypeError, ValueError):
+            keep = 50
+        try:
+            stat = syncsvc.prune_runs(keep)
+            stat["ok"] = True
+            stat["history_bytes"] = syncsvc.history_file_bytes()
+            self.write(json.dumps(stat, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 
 
 class SyncCookieApiHandler(webBase.BaseHandler, ABC):

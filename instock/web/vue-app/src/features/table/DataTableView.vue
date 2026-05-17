@@ -8,6 +8,7 @@ import type {
   GridOptions,
   GridReadyEvent,
   CellClickedEvent,
+  SortChangedEvent,
 } from "ag-grid-community";
 import { ElMessage } from "element-plus";
 import * as XLSX from "xlsx";
@@ -72,6 +73,9 @@ const rows = ref<Record<string, unknown>[]>([]);
 const totalRows = ref(0);
 const page = ref(1);
 const pageSize = ref(500);
+/** 服务端全表排序（分页下表头排序仅对当前页无效） */
+const sortCol = ref<string | null>(null);
+const sortDir = ref<"asc" | "desc" | null>(null);
 const exportLoading = ref(false);
 const rowsLoading = ref(false);
 const rowsError = ref<string | null>(null);
@@ -152,6 +156,10 @@ async function loadTableRows(
     page: String(pageNum),
     page_size: String(ps),
   });
+  if (sortCol.value) {
+    qs.set("sort_col", sortCol.value);
+    qs.set("sort_dir", sortDir.value || "desc");
+  }
   const url = instockAbsUrl(`/instock/api_data?${qs.toString()}`);
 
   try {
@@ -221,6 +229,8 @@ watch(
     rows.value = [];
     totalRows.value = 0;
     page.value = 1;
+    sortCol.value = null;
+    sortDir.value = null;
     rowsError.value = null;
     if (!tn) return;
     void loadTableMeta(tn);
@@ -234,6 +244,8 @@ watch(
     rows.value = [];
     totalRows.value = 0;
     page.value = 1;
+    sortCol.value = null;
+    sortDir.value = null;
     rowsError.value = null;
     if (!name || !date || !meta.value) return;
     void loadTableRows(name, date, 1);
@@ -278,6 +290,8 @@ watch(
         headerName: c.caption,
         width: Math.max(w, 72),
         sortable: true,
+        /** 排序由服务端全表 ORDER BY，避免仅排当前页 */
+        comparator: () => 0,
         filter: "agTextColumnFilter",
         floatingFilter: false,
         pinned: i < 3 ? "left" : undefined,
@@ -342,6 +356,27 @@ function onGridReady(e: GridReadyEvent) {
   gridApi.value = e.api;
 }
 
+function onSortChanged(e: SortChangedEvent) {
+  const api = e.api;
+  const sorted = api
+    .getColumnState()
+    .filter((c) => c.sort != null && c.sort !== undefined);
+  const nextCol = sorted.length ? sorted[0].colId ?? null : null;
+  const nextDir =
+    sorted.length && sorted[0].sort === "asc"
+      ? "asc"
+      : sorted.length
+        ? "desc"
+        : null;
+  if (nextCol === sortCol.value && nextDir === sortDir.value) return;
+  sortCol.value = nextCol;
+  sortDir.value = nextDir;
+  page.value = 1;
+  if (tableName.value && dateStr.value) {
+    void loadTableRows(tableName.value, dateStr.value, 1);
+  }
+}
+
 function onCellClicked(e: CellClickedEvent) {
   if (e.colDef?.field !== "code" || !e.data) return;
   const row = e.data as Record<string, unknown>;
@@ -380,6 +415,10 @@ async function exportExcel() {
         page: String(p),
         page_size: "2000",
       });
+      if (sortCol.value) {
+        qs.set("sort_col", sortCol.value);
+        qs.set("sort_dir", sortDir.value || "desc");
+      }
       const r = await fetch(instockAbsUrl(`/instock/api_data?${qs.toString()}`));
       const j = (await r.json()) as PagedRowsResponse;
       if (!r.ok || !j.rows?.length) break;
@@ -428,7 +467,7 @@ const loadHint = computed(() => {
 <template>
   <PageShell
     :title="pageTitle"
-    subtitle="日期切换后自动加载；点击代码在新标签打开东方财富行情，⌘/Ctrl+点击仍进入本系统指标页。"
+    subtitle="日期切换后自动加载；点击列标题按全表排序（非仅当前页）；点击代码打开东方财富，⌘/Ctrl+点击进指标页。"
   >
     <UiStateError v-if="showMetaError" :message="metaError || '加载表信息失败'" />
     <div v-if="showMetaError" class="retry-row">
@@ -488,6 +527,7 @@ const loadHint = computed(() => {
               :row-data="rows"
               row-selection="multiple"
               @grid-ready="onGridReady"
+              @sort-changed="onSortChanged"
               @cell-clicked="onCellClicked"
             />
           </div>

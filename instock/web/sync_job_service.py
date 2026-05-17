@@ -15,13 +15,14 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-_max_output_chars = 48000
+_max_output_chars = 20000
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _HISTORY_PATH = os.path.join(_REPO_ROOT, "instock", "log", "sync_job_history.json")
 _LOCK = threading.Lock()
 _RUNS: Dict[str, Dict[str, Any]] = {}
 _ORDER: List[str] = []
+_ACTIVE_PROCS: Dict[str, subprocess.Popen] = {}
 _MAX_RUNS = 200
 _COOKIE_MAX_BYTES = 65536
 
@@ -152,22 +153,56 @@ def _truncate(s: str) -> str:
 
 
 _ERR_PAT = re.compile(
-    r"处理异常|Traceback|ERROR|Error:|Exception:|CRITICAL|致命|失败\[",
+    r"处理异常|Traceback|ERROR|Error:|Exception:|CRITICAL|致命|失败\[|\[FAIL\]",
+    re.IGNORECASE,
+)
+_PROGRESS_PAT = re.compile(
+    r"\[PROGRESS\]\s*(?:(\d+)/(\d+)\s+)?(\d{4}-\d{2}-\d{2})?\s*(.*)?",
     re.IGNORECASE,
 )
 
 
-def _progress_meta(merged_out: str) -> Tuple[int, int, int, str]:
-    """从子进程累计输出估算：字节数、行数、疑似报错行数、最近若干条报错相关行。"""
+def _progress_meta(merged_out: str) -> Tuple[int, int, int, str, str, int, int]:
+    """字节数、行数、疑似报错行数、报错尾、最近进度文案、进度 current、进度 total。"""
     if not merged_out:
-        return 0, 0, 0, ""
+        return 0, 0, 0, "", "", 0, 0
     lines = merged_out.split("\n")
     nlines = len(lines)
     nbytes = len(merged_out.encode("utf-8"))
     hit_lines = [ln for ln in lines if _ERR_PAT.search(ln)]
     err_count = len(hit_lines)
     tail_err = "\n".join(hit_lines[-12:]) if hit_lines else ""
-    return nbytes, nlines, err_count, tail_err
+    prog_lines = [ln.strip() for ln in lines if "[PROGRESS]" in ln]
+    progress_hint = prog_lines[-1] if prog_lines else ""
+    cur, total = 0, 0
+    if prog_lines:
+        m = _PROGRESS_PAT.search(prog_lines[-1])
+        if m and m.group(1) and m.group(2):
+            cur, total = int(m.group(1)), int(m.group(2))
+    return nbytes, nlines, err_count, tail_err, progress_hint, cur, total
+
+
+def _verify_spot_dates_after_run(date_list_csv: str) -> Dict[str, Any]:
+    """补数完成后核对枚举日期是否已写入 cn_stock_spot。"""
+    import instock.lib.database as mdb
+
+    names = [x.strip() for x in (date_list_csv or "").split(",") if x.strip()]
+    if not names:
+        return {"checked": 0, "still_missing": [], "ok_dates": []}
+    still: List[str] = []
+    ok: List[str] = []
+    for ds in names:
+        try:
+            cnt = mdb.executeSqlCount(
+                "SELECT COUNT(*) FROM `cn_stock_spot` WHERE `date` = %s", (ds,)
+            )
+            if cnt and cnt > 0:
+                ok.append(ds)
+            else:
+                still.append(ds)
+        except Exception:
+            still.append(ds)
+    return {"checked": len(names), "still_missing": still, "ok_dates": ok}
 
 
 def _load() -> None:
@@ -190,6 +225,10 @@ def _load() -> None:
                     item.setdefault("trigger_source", "manual")
                     item.setdefault("schedule_id", "")
                     item.setdefault("schedule_title", "")
+                    item.setdefault("progress_hint", "")
+                    item.setdefault("progress_current", 0)
+                    item.setdefault("progress_total", 0)
+                    item.setdefault("post_verify", None)
                     _RUNS[rid] = item
                     _ORDER.append(rid)
     except Exception:
@@ -227,17 +266,145 @@ def get_run(run_id: str) -> Optional[Dict[str, Any]]:
         return _RUNS.get(run_id)
 
 
-def delete_run(run_id: str) -> bool:
+def cancel_run(run_id: str) -> Dict[str, Any]:
+    """终止运行中的子进程（用户手动停止）。"""
+    with _LOCK:
+        r = _RUNS.get(run_id)
+        if not r:
+            raise ValueError("记录不存在")
+        if r.get("status") != "running":
+            raise ValueError("任务未在运行中")
+        r["status"] = "cancelled"
+        r["error_message"] = "用户手动停止"
+        proc = _ACTIVE_PROCS.get(run_id)
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        except Exception as e:
+            logging.warning("cancel_run %s: %s", run_id, e)
+    with _LOCK:
+        r = _RUNS.get(run_id)
+        if r:
+            r["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            r["exit_code"] = -15
+            _ACTIVE_PROCS.pop(run_id, None)
+    _persist()
+    return get_run(run_id) or {}
+
+
+def _run_log_bytes(rec: Dict[str, Any]) -> int:
+    """单条记录中日志文本占用的字节数（用于删除提示）。"""
+    total = 0
+    for key in ("stdout_tail", "stderr_tail", "last_errors_tail", "error_message"):
+        val = rec.get(key)
+        if val:
+            total += len(str(val).encode("utf-8"))
+    return total
+
+
+def delete_run(run_id: str) -> Tuple[bool, int]:
+    """
+    删除执行记录及其全部实时输出（stdout_tail 等均在 sync_job_history.json 内）。
+    返回 (是否成功, 释放的大约字节数)。
+    """
     with _LOCK:
         if run_id not in _RUNS:
-            return False
+            return False, 0
+        rec = _RUNS[run_id]
+        if rec.get("status") == "running":
+            raise ValueError("任务仍在运行，请先点「停止任务」再删除")
+        freed = _run_log_bytes(rec)
         del _RUNS[run_id]
         try:
             _ORDER.remove(run_id)
         except ValueError:
             pass
+        _ACTIVE_PROCS.pop(run_id, None)
     _persist()
-    return True
+    return True, freed
+
+
+def delete_runs(run_ids: List[str]) -> Dict[str, Any]:
+    """批量删除执行记录（含日志）。运行中的 id 会跳过。"""
+    uniq = []
+    seen = set()
+    for rid in run_ids or []:
+        s = str(rid).strip()
+        if s and s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    removed = 0
+    freed = 0
+    skipped_running: List[str] = []
+    not_found: List[str] = []
+    with _LOCK:
+        for rid in uniq:
+            rec = _RUNS.get(rid)
+            if not rec:
+                not_found.append(rid)
+                continue
+            if rec.get("status") == "running":
+                skipped_running.append(rid)
+                continue
+            freed += _run_log_bytes(rec)
+            del _RUNS[rid]
+            try:
+                _ORDER.remove(rid)
+            except ValueError:
+                pass
+            _ACTIVE_PROCS.pop(rid, None)
+            removed += 1
+    if removed:
+        _persist()
+    return {
+        "removed": removed,
+        "freed_bytes": freed,
+        "skipped_running": skipped_running,
+        "not_found": not_found,
+        "history_bytes": history_file_bytes(),
+    }
+
+
+def delete_all_finished_runs() -> Dict[str, Any]:
+    """删除所有非运行中记录。"""
+    with _LOCK:
+        ids = [rid for rid, rec in _RUNS.items() if rec.get("status") != "running"]
+    return delete_runs(ids)
+
+
+def prune_runs(keep_last: int = 50) -> Dict[str, Any]:
+    """只保留最近 keep_last 条记录，其余（含日志）一并删除。"""
+    keep = max(1, min(int(keep_last), _MAX_RUNS))
+    removed = 0
+    freed = 0
+    with _LOCK:
+        if len(_ORDER) <= keep:
+            return {"removed": 0, "freed_bytes": 0, "remaining": len(_ORDER)}
+        drop_ids = _ORDER[: len(_ORDER) - keep]
+        for rid in drop_ids:
+            rec = _RUNS.pop(rid, None)
+            if rec:
+                freed += _run_log_bytes(rec)
+                removed += 1
+            try:
+                _ORDER.remove(rid)
+            except ValueError:
+                pass
+    _persist()
+    return {"removed": removed, "freed_bytes": freed, "remaining": keep}
+
+
+def history_file_bytes() -> int:
+    """当前历史文件大小（字节）。"""
+    try:
+        return os.path.getsize(_HISTORY_PATH) if os.path.isfile(_HISTORY_PATH) else 0
+    except OSError:
+        return 0
 
 
 def retry_from_run(run_id: str) -> Dict[str, Any]:
@@ -298,6 +465,8 @@ def _worker(run_id: str) -> None:
         from instock.core.spot_source import normalize_spot_source
 
         env["INSTOCK_SPOT_DATA_SOURCE"] = normalize_spot_source(run.get("spot_data_source") or "")
+        env.setdefault("INSTOCK_QUALITY_STRICT", "1")
+        env.setdefault("INSTOCK_MAX_CONSECUTIVE_FETCH_FAIL", "5")
     cmd = list(run["command"])
     if cmd and cmd[0] == sys.executable and (len(cmd) < 2 or cmd[1] != "-u"):
         cmd.insert(1, "-u")
@@ -316,8 +485,13 @@ def _worker(run_id: str) -> None:
             text=True,
             bufsize=1,
         )
+        with _LOCK:
+            _ACTIVE_PROCS[run_id] = proc
         assert proc.stdout is not None
         while True:
+            with _LOCK:
+                if _RUNS.get(run_id, {}).get("status") == "cancelled":
+                    break
             chunk = proc.stdout.read(8192)
             if not chunk:
                 break
@@ -325,7 +499,9 @@ def _worker(run_id: str) -> None:
             if len(merged_out) > 8_000_000:
                 merged_out = merged_out[-6_000_000:]
             now = time.time()
-            nbytes, nlines, err_cnt, err_tail = _progress_meta(merged_out)
+            nbytes, nlines, err_cnt, err_tail, prog_hint, prog_cur, prog_tot = _progress_meta(
+                merged_out
+            )
             with _LOCK:
                 r = _RUNS.get(run_id)
                 if r:
@@ -334,6 +510,9 @@ def _worker(run_id: str) -> None:
                     r["progress_lines"] = nlines
                     r["error_line_count"] = err_cnt
                     r["last_errors_tail"] = err_tail[-6000:] if err_tail else ""
+                    r["progress_hint"] = prog_hint
+                    r["progress_current"] = prog_cur
+                    r["progress_total"] = prog_tot
             if now - last_persist > 2.0:
                 last_persist = now
                 _persist()
@@ -344,31 +523,65 @@ def _worker(run_id: str) -> None:
         start_exc = e
         merged_out += "\n[exception] " + str(e)
         code = -1
+    finally:
+        with _LOCK:
+            _ACTIVE_PROCS.pop(run_id, None)
     mo = merged_out or ""
-    nbytes, nlines, err_cnt, err_tail = _progress_meta(mo)
+    nbytes, nlines, err_cnt, err_tail, prog_hint, prog_cur, prog_tot = _progress_meta(mo)
+    has_fail_markers = "[FAIL]" in mo
     with _LOCK:
         r = _RUNS.get(run_id)
         if r:
+            if r.get("status") == "cancelled":
+                r["stdout_tail"] = _truncate(mo)
+                _persist()
+                return
             r["finished_at"] = datetime.now().isoformat(timespec="seconds")
             r["exit_code"] = code
-            r["status"] = "success" if code == 0 else "failed"
             r["stdout_tail"] = _truncate(mo)
             r["stderr_tail"] = ""
             r["progress_bytes"] = nbytes
             r["progress_lines"] = nlines
             r["error_line_count"] = err_cnt
             r["last_errors_tail"] = (err_tail[-6000:] if err_tail else "")
+            r["progress_hint"] = prog_hint
+            r["progress_current"] = prog_cur
+            r["progress_total"] = prog_tot
+
+            status = "success" if code == 0 and not has_fail_markers else "failed"
+            post_verify = None
+            if (
+                status == "success"
+                and r.get("job_id") == "basic_data_daily_job"
+                and (r.get("date_mode") or "").lower() == "list"
+                and (r.get("date_list") or "").strip()
+            ):
+                post_verify = _verify_spot_dates_after_run(r.get("date_list") or "")
+                r["post_verify"] = post_verify
+                still = post_verify.get("still_missing") or []
+                if still:
+                    status = "failed"
+                    r["error_message"] = (
+                        f"进程已结束但仍有 {len(still)} 个交易日主表无数据："
+                        + ", ".join(still[:15])
+                        + ("…" if len(still) > 15 else "")
+                    )
+            r["status"] = status
+
             if proc is None and start_exc is not None:
                 r["error_message"] = str(start_exc)
             elif proc is None:
                 r["error_message"] = "进程启动失败"
-            elif code != 0:
+            elif code != 0 or has_fail_markers:
                 hint = r.get("last_errors_tail") or ""
                 if not hint.strip():
                     tail_lines = mo.split("\n")[-25:]
                     hint = "\n".join(tail_lines)
-                r["error_message"] = (hint.strip()[:4000] if hint.strip() else "非零退出码，请查看完整输出")
-            else:
+                if not r.get("error_message"):
+                    r["error_message"] = (
+                        hint.strip()[:4000] if hint.strip() else "任务失败，请查看完整输出"
+                    )
+            elif status == "success" and not r.get("error_message"):
                 r["error_message"] = None
     _persist()
 
@@ -416,6 +629,10 @@ def start_job(
         "progress_lines": 0,
         "error_line_count": 0,
         "last_errors_tail": "",
+        "progress_hint": "",
+        "progress_current": 0,
+        "progress_total": 0,
+        "post_verify": None,
     }
     with _LOCK:
         _RUNS[run_id] = rec

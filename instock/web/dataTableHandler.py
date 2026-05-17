@@ -39,12 +39,35 @@ def _uses_attention_join(web_module_data) -> bool:
     return _ATTENTION_TABLE in oc and "SELECT" in oc.upper()
 
 
-def _build_list_sql(web_module_data, date, limit=None, offset=None):
+def _sortable_columns(web_module_data) -> set:
+    allowed = {"cdatetime"}
+    cols = web_module_data.columns or ()
+    for c in cols:
+        if isinstance(c, str):
+            allowed.add(c)
+    return allowed
+
+
+def _build_order_sql(web_module_data, sort_col, sort_dir, use_join: bool) -> str:
+    """用户点击表头排序时全表 ORDER BY；否则用模块默认 order_by。"""
+    if sort_col and sort_col in _sortable_columns(web_module_data):
+        direction = "ASC" if (sort_dir or "").lower() == "asc" else "DESC"
+        if sort_col == "cdatetime" or not use_join:
+            return f" ORDER BY `{sort_col}` {direction}"
+        return f" ORDER BY s.`{sort_col}` {direction}"
+    if web_module_data.order_by:
+        return f" ORDER BY {web_module_data.order_by}"
+    return ""
+
+
+def _build_list_sql(web_module_data, date, limit=None, offset=None, sort_col=None, sort_dir=None):
     """返回 (sql, params)。"""
     table = web_module_data.table_name
     params = []
+    use_join = _uses_attention_join(web_module_data)
+    order_sql = _build_order_sql(web_module_data, sort_col, sort_dir, use_join)
 
-    if _uses_attention_join(web_module_data):
+    if use_join:
         sql = (
             f"SELECT s.*, a.`datetime` AS `cdatetime` "
             f"FROM `{table}` s "
@@ -53,8 +76,7 @@ def _build_list_sql(web_module_data, date, limit=None, offset=None):
         if date is not None:
             sql += " WHERE s.`date` = %s"
             params.append(date)
-        if web_module_data.order_by:
-            sql += f" ORDER BY {web_module_data.order_by}"
+        sql += order_sql
     else:
         order_columns = ""
         if web_module_data.order_columns is not None:
@@ -63,8 +85,7 @@ def _build_list_sql(web_module_data, date, limit=None, offset=None):
         if date is not None:
             sql += " WHERE `date` = %s"
             params.append(date)
-        if web_module_data.order_by:
-            sql += f" ORDER BY {web_module_data.order_by}"
+        sql += order_sql
 
     if limit is not None:
         sql += f" LIMIT {int(limit)} OFFSET {int(offset or 0)}"
@@ -109,6 +130,8 @@ class GetStockDataHandler(webBase.BaseHandler, ABC):
         date = self.get_argument("date", default=None, strip=False)
         page_arg = self.get_argument("page", default=None)
         page_size_arg = self.get_argument("page_size", default=None)
+        sort_col = self.get_argument("sort_col", default=None, strip=True) or None
+        sort_dir = self.get_argument("sort_dir", default=None, strip=True) or None
 
         import instock.core.singleton_stock_web_module_data as sswmd
 
@@ -134,25 +157,38 @@ class GetStockDataHandler(webBase.BaseHandler, ABC):
                 total = int(count_row["cnt"]) if count_row else 0
                 offset = (page - 1) * page_size
                 list_sql, list_params = _build_list_sql(
-                    web_module_data, date, limit=page_size, offset=offset
+                    web_module_data,
+                    date,
+                    limit=page_size,
+                    offset=offset,
+                    sort_col=sort_col,
+                    sort_dir=sort_dir,
                 )
                 data = self.db.query(list_sql, *list_params)
+                payload = {
+                    "ok": True,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "rows": data,
+                }
+                if sort_col:
+                    payload["sort_col"] = sort_col
+                    payload["sort_dir"] = (
+                        "asc" if (sort_dir or "").lower() == "asc" else "desc"
+                    )
                 self.write(
                     json.dumps(
-                        {
-                            "ok": True,
-                            "total": total,
-                            "page": page,
-                            "page_size": page_size,
-                            "rows": data,
-                        },
+                        payload,
                         cls=MyEncoder,
                         ensure_ascii=False,
                     )
                 )
                 return
 
-            list_sql, list_params = _build_list_sql(web_module_data, date)
+            list_sql, list_params = _build_list_sql(
+                web_module_data, date, sort_col=sort_col, sort_dir=sort_dir
+            )
             data = self.db.query(list_sql, *list_params)
         except ProgrammingError as e:
             if e.args and e.args[0] == 1146:

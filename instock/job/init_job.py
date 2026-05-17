@@ -64,6 +64,23 @@ def main():
         _tc.ensure_table()
     except Exception as e:
         logging.error(f"init_job: trade_calendar 建表异常：{e}")
+    # 将 tablestructure 中文说明写入已存在表的 MySQL COMMENT（仅改注释，不改列类型）
+    if os.environ.get("INSTOCK_APPLY_DB_COMMENTS", "1") != "0":
+        try:
+            from instock.core import db_schema_comments as _dsc
+
+            st = _dsc.apply_table_and_column_comments()
+            logging.info(
+                "init_job: 表/列 COMMENT 同步完成 tables=%s cols=%s missing=%s",
+                st.get("table_comments"),
+                st.get("column_comments"),
+                st.get("tables_skipped_missing"),
+            )
+        except Exception as e:
+            logging.error(
+                "init_job: COMMENT 同步失败（可手动执行 scripts/apply_table_comments.py）：%s",
+                e,
+            )
     # 执行数据初始化。
 
 

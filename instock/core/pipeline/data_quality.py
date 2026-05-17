@@ -63,7 +63,11 @@ def validate_cn_stock_spot(trade_date: datetime.date) -> ValidationResult:
     cnt = _count_for_date(table, trade_date)
     if cnt == 0:
         return ValidationResult(
-            True, table, trade_date, skipped=True, message="无数据，跳过质量校验"
+            False,
+            table,
+            trade_date,
+            errors=[{"rule": "H0", "detail": "当日无数据"}],
+            message="无数据",
         )
 
     min_rows = int(os.environ.get("QUALITY_STOCK_MIN_ROWS", "3500"))
@@ -123,7 +127,11 @@ def validate_cn_etf_spot(trade_date: datetime.date) -> ValidationResult:
     cnt = _count_for_date(table, trade_date)
     if cnt == 0:
         return ValidationResult(
-            True, table, trade_date, skipped=True, message="无数据，跳过质量校验"
+            False,
+            table,
+            trade_date,
+            errors=[{"rule": "H0", "detail": "当日无数据"}],
+            message="无数据",
         )
 
     min_rows = int(os.environ.get("QUALITY_ETF_MIN_ROWS", "400"))

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from "vue";
-import { Refresh, VideoPlay } from "@element-plus/icons-vue";
+import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
 
@@ -34,6 +34,10 @@ interface RunRow {
   stdout_tail?: string;
   stderr_tail?: string;
   error_message?: string;
+  progress_hint?: string;
+  progress_current?: number;
+  progress_total?: number;
+  post_verify?: { still_missing?: string[]; ok_dates?: string[] } | null;
 }
 
 interface ScheduleRow {
@@ -59,19 +63,25 @@ const dateEnd = ref("");
 const spotSource = ref("eastmoney");
 const runMsg = ref("");
 const runs = ref<RunRow[]>([]);
+const selectedRunIds = ref<string[]>([]);
+const runsTableRef = ref<{ clearSelection?: () => void } | null>(null);
 const detailId = ref("");
 const detailErr = ref("");
 const detailOut = ref("");
 const detailErrTail = ref("");
 
 const trackingId = ref<string | null>(null);
+const stopping = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const progressPanel = ref(false);
 const progressText = ref("");
+const progressPercent = ref(0);
+const progressIndeterminate = ref(true);
 const liveOut = ref("");
 const liveErr = ref("");
 const showErrBox = ref(false);
+const lastFinishedRun = ref<RunRow | null>(null);
 
 const prefsMsg = ref("");
 
@@ -144,8 +154,17 @@ function statusType(
 ): "success" | "warning" | "info" | "danger" | "primary" {
   if (st === "success") return "success";
   if (st === "failed") return "danger";
+  if (st === "cancelled") return "warning";
   if (st === "running") return "info";
   return "info";
+}
+
+function statusLabel(st: string): string {
+  if (st === "success") return "成功";
+  if (st === "failed") return "失败";
+  if (st === "cancelled") return "已停止";
+  if (st === "running") return "运行中";
+  return st;
 }
 
 async function loadJobs() {
@@ -214,20 +233,61 @@ async function pollOnce() {
   const b = row.progress_bytes ?? 0;
   const ln = row.progress_lines ?? 0;
   const ec = row.error_line_count ?? 0;
-  progressText.value = `已运行约 ${sec} 秒 · 输出 ${b} 字节 · ${ln} 行 · 异常相关行约 ${ec}`;
+  const hint = (row.progress_hint || "").trim();
+  const cur = row.progress_current ?? 0;
+  const tot = row.progress_total ?? 0;
+  if (tot > 0 && cur > 0) {
+    progressPercent.value = Math.min(100, Math.round((cur / tot) * 100));
+    progressIndeterminate.value = false;
+  } else {
+    progressPercent.value = 0;
+    progressIndeterminate.value = true;
+  }
+  progressText.value = [
+    `已运行约 ${sec} 秒`,
+    tot > 0 ? `进度 ${cur}/${tot}` : "",
+    hint ? `当前：${hint.replace(/^\[PROGRESS\]\s*/i, "")}` : "",
+    `输出 ${b} 字节 · ${ln} 行 · 异常行约 ${ec}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   liveOut.value = row.stdout_tail || "";
   const tail = (row.last_errors_tail || "").trim();
   liveErr.value = tail;
   showErrBox.value =
-    !!tail && (row.status === "running" || row.status === "failed");
+    !!tail &&
+      (row.status === "running" ||
+        row.status === "failed" ||
+        row.status === "cancelled");
   if (row.status !== "running") {
+    lastFinishedRun.value = row;
     stopPoll();
     await loadRuns();
     showDetail(row.id);
     progressPanel.value = false;
-    ElMessage[row.status === "success" ? "success" : "warning"](
-      row.status === "success" ? "任务已完成" : "任务已结束"
-    );
+    const pv = row.post_verify;
+    if (row.status === "cancelled") {
+      ElMessage.warning(row.error_message || "任务已手动停止");
+    } else if (row.status === "success") {
+      ElMessage.success("任务已完成");
+      if (
+        row.job_id === "basic_data_daily_job" &&
+        (row.date_mode === "list" || row.date_list)
+      ) {
+        await runDh();
+        const still = (dhMissingCsv.value || "").split(",").filter(Boolean).length;
+        if (still > 0) {
+          ElMessage.warning(`自动复检：仍有 ${still} 个交易日缺主表数据`);
+        } else {
+          ElMessage.success("自动复检：缺失日已补齐");
+        }
+      }
+    } else {
+      const extra = pv?.still_missing?.length
+        ? `；库内仍缺 ${pv.still_missing.length} 日`
+        : "";
+      ElMessage.error((row.error_message || "任务失败").slice(0, 200) + extra);
+    }
   }
 }
 
@@ -263,6 +323,34 @@ async function showDetail(id: string) {
   detailErr.value = parts.length ? parts.join("\n\n") : "（无）";
   detailOut.value = row.stdout_tail || "";
   detailErrTail.value = row.stderr_tail || "";
+}
+
+async function cancelRun() {
+  if (!trackingId.value) {
+    ElMessage.info("当前没有运行中的任务");
+    return;
+  }
+  stopping.value = true;
+  try {
+    const r = await fetch("/instock/api/sync/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify({ run_id: trackingId.value }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      runMsg.value = "正在停止…";
+      ElMessage.warning("已发送停止信号，子进程即将结束");
+      await pollOnce();
+      await loadRuns();
+    } else {
+      ElMessage.error(j.error || "停止失败");
+    }
+  } catch {
+    ElMessage.error("停止请求失败");
+  } finally {
+    stopping.value = false;
+  }
 }
 
 async function triggerRun() {
@@ -324,8 +412,20 @@ async function retryRun(id: string) {
   }
 }
 
+function formatBytes(n: number): string {
+  if (!n || n < 1024) return `${n || 0} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
 async function deleteRun(id: string) {
-  if (!window.confirm("确定删除这条记录？")) return;
+  if (
+    !window.confirm(
+      "确定删除这条执行记录？\n将同时删除该任务的实时输出与错误日志（释放磁盘空间）。"
+    )
+  ) {
+    return;
+  }
   try {
     const r = await fetch("/instock/api/sync/delete_run", {
       method: "POST",
@@ -340,10 +440,118 @@ async function deleteRun(id: string) {
         detailOut.value = "";
         detailErrTail.value = "";
       }
+      if (trackingId.value === id) {
+        stopPoll();
+        progressPanel.value = false;
+        liveOut.value = "";
+        liveErr.value = "";
+        showErrBox.value = false;
+        progressText.value = "";
+      }
       await loadRuns();
+      const freed = Number(j.freed_bytes) || 0;
+      const hist = Number(j.history_bytes) || 0;
+      ElMessage.success(
+        `已删除${freed ? `，约释放 ${formatBytes(freed)} 日志` : ""}` +
+          (hist ? `；历史文件约 ${formatBytes(hist)}` : "")
+      );
     } else ElMessage.error(j.error || "删除失败");
   } catch {
     ElMessage.error("删除失败");
+  }
+}
+
+function isRunSelectable(row: RunRow) {
+  return row.status !== "running";
+}
+
+function onRunsSelectionChange(rows: RunRow[]) {
+  selectedRunIds.value = rows.map((r) => r.id);
+}
+
+async function batchDeleteRuns(ids: string[], label: string) {
+  const list = [...new Set(ids.filter(Boolean))];
+  if (!list.length) {
+    ElMessage.info("没有可删除的记录");
+    return;
+  }
+  if (
+    !window.confirm(
+      `确定${label}共 ${list.length} 条？\n将永久删除这些记录及其全部实时输出日志。`
+    )
+  ) {
+    return;
+  }
+  try {
+    const r = await fetch("/instock/api/sync/delete_runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify({ ids: list }),
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      ElMessage.error(j.error || "批量删除失败");
+      return;
+    }
+    const skipped = (j.skipped_running as string[])?.length || 0;
+    if (detailId.value && list.includes(detailId.value)) {
+      detailId.value = "";
+      detailErr.value = "";
+      detailOut.value = "";
+      detailErrTail.value = "";
+    }
+    if (trackingId.value && list.includes(trackingId.value)) {
+      stopPoll();
+      progressPanel.value = false;
+      liveOut.value = "";
+      liveErr.value = "";
+    }
+    selectedRunIds.value = [];
+    runsTableRef.value?.clearSelection?.();
+    await loadRuns();
+    let msg = `已删除 ${j.removed || 0} 条，约释放 ${formatBytes(Number(j.freed_bytes) || 0)}`;
+    if (skipped) msg += `；${skipped} 条运行中已跳过`;
+    ElMessage.success(msg);
+  } catch {
+    ElMessage.error("批量删除失败");
+  }
+}
+
+function deleteSelectedRuns() {
+  void batchDeleteRuns(selectedRunIds.value, "删除选中");
+}
+
+function deleteAllFinishedRuns() {
+  const ids = runs.value.filter((r) => r.status !== "running").map((r) => r.id);
+  void batchDeleteRuns(ids, "删除全部已完成");
+}
+
+async function pruneOldRuns() {
+  if (
+    !window.confirm(
+      "清理旧执行记录？\n仅保留最近 50 条，更早的记录及其全部实时输出将永久删除。"
+    )
+  ) {
+    return;
+  }
+  try {
+    const r = await fetch("/instock/api/sync/prune_runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify({ keep_last: 50 }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      await loadRuns();
+      ElMessage.success(
+        `已清理 ${j.removed || 0} 条，约释放 ${formatBytes(Number(j.freed_bytes) || 0)}；` +
+          `历史文件约 ${formatBytes(Number(j.history_bytes) || 0)}`
+      );
+    } else {
+      ElMessage.error(j.error || "清理失败");
+    }
+  } catch {
+    ElMessage.error("清理失败");
   }
 }
 
@@ -672,14 +880,41 @@ onUnmounted(() => stopPoll());
           </el-space>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :icon="VideoPlay" @click="triggerRun">开始执行</el-button>
-          <el-text type="primary" style="margin-left: 12px">{{ runMsg }}</el-text>
+          <el-space wrap>
+            <el-button
+              type="primary"
+              :icon="VideoPlay"
+              :disabled="!!trackingId"
+              @click="triggerRun"
+            >
+              开始执行
+            </el-button>
+            <el-button
+              type="danger"
+              plain
+              :icon="VideoPause"
+              :disabled="!trackingId"
+              :loading="stopping"
+              @click="cancelRun"
+            >
+              停止任务
+            </el-button>
+          </el-space>
+          <el-text type="primary" style="display: block; margin-top: 8px">{{ runMsg }}</el-text>
+          <el-text v-if="trackingId" type="warning" size="small" style="display: block; margin-top: 4px">
+            连续 5 个交易日拉取失败将自动终止；可随时点「停止任务」
+          </el-text>
         </el-form-item>
       </el-form>
 
       <el-collapse-transition>
         <div v-show="progressPanel" class="progress-box">
-          <el-progress :indeterminate="true" :stroke-width="8" status="warning" />
+          <el-progress
+            :percentage="progressPercent"
+            :indeterminate="progressIndeterminate"
+            :stroke-width="8"
+            status="warning"
+          />
           <el-text>{{ progressText }}</el-text>
           <el-alert v-show="showErrBox" type="error" :closable="false" class="mt">
             <pre class="log-pre">{{ liveErr }}</pre>
@@ -694,10 +929,43 @@ onUnmounted(() => stopPoll());
       <template #header>
         <div class="card-head">
           <span>执行记录</span>
-          <el-button :icon="Refresh" size="small" @click="loadRuns">刷新</el-button>
+          <el-space wrap>
+            <el-button :icon="Refresh" size="small" @click="loadRuns">刷新</el-button>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :disabled="!selectedRunIds.length"
+              @click="deleteSelectedRuns"
+            >
+              删除选中{{ selectedRunIds.length ? `(${selectedRunIds.length})` : "" }}
+            </el-button>
+            <el-button size="small" type="danger" plain @click="deleteAllFinishedRuns">
+              删除全部已完成
+            </el-button>
+            <el-button size="small" type="warning" plain @click="pruneOldRuns">
+              仅保留最近50条
+            </el-button>
+          </el-space>
         </div>
       </template>
-      <el-table :data="runs" stripe border size="small" max-height="360">
+      <el-text size="small" type="info" class="table-hint">
+        勾选后批量删除；「删除全部已完成」不含运行中任务。日志在 instock/log/sync_job_history.json。
+      </el-text>
+      <el-table
+        ref="runsTableRef"
+        :data="runs"
+        stripe
+        border
+        size="small"
+        max-height="360"
+        @selection-change="onRunsSelectionChange"
+      >
+        <el-table-column
+          type="selection"
+          width="42"
+          :selectable="isRunSelectable"
+        />
         <el-table-column prop="started_at" label="开始时间" width="155" />
         <el-table-column prop="label" label="作业" width="120" show-overflow-tooltip />
         <el-table-column label="条件" min-width="200" show-overflow-tooltip>
@@ -705,7 +973,9 @@ onUnmounted(() => stopPoll());
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="statusType(row.status)" size="small">{{
+              statusLabel(row.status)
+            }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="进度" width="160" show-overflow-tooltip>
@@ -773,6 +1043,10 @@ onUnmounted(() => stopPoll());
   align-items: center;
   justify-content: space-between;
   width: 100%;
+}
+.table-hint {
+  display: block;
+  margin-bottom: 10px;
 }
 .mt {
   margin-top: 12px;
