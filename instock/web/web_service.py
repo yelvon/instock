@@ -70,6 +70,8 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/scheduler", syncJobHandler.SchedulerConfigApiHandler),
             (r"/instock/api/sync/data_batches", syncJobHandler.DataBatchesApiHandler),
             (r"/instock/api/sync/governance_env", syncJobHandler.DataGovernanceEnvApiHandler),
+            (r"/instock/api/sync/eastmoney_probe", syncJobHandler.EastmoneyProbeApiHandler),
+            (r"/instock/api/sync/mootdx_probe", syncJobHandler.MootdxProbeApiHandler),
             (r"/instock/api/sync/data_sources", syncJobHandler.DataSourcesApiHandler),
             (r"/instock/api/nav", navApiHandler.NavApiHandler),
             (r"/instock/api/table_meta", tableMetaHandler.TableMetaHandler),

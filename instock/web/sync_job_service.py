@@ -78,6 +78,20 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "description": "从网络拉取 A 股交易日历并 upsert 到本地表 trade_calendar，供断档检测与质量 H6 使用。建议新库或发现「数据缺口自检」提示日历为空时执行；仅需日期模式选「默认」。",
     },
     {
+        "id": "sync_stock_universe_job",
+        "script": "sync_stock_universe_job.py",
+        "title": "同步证券主表（mootdx）",
+        "hint": "cn_stock_universe 全市场代码",
+        "description": "用 mootdx 在线拉沪/深证券列表（或本地 TDX vipdoc 扫描），过滤 A 股后写入 cn_stock_universe。供 mootdx 遍历拉 K 线使用；仅需日期模式选「默认」。环境变量 INSTOCK_UNIVERSE_SOURCE=online|local。",
+    },
+    {
+        "id": "mootdx_bars_sync_job",
+        "script": "mootdx_bars_sync_job.py",
+        "title": "mootdx 遍历拉 K 线",
+        "hint": "依赖证券主表 + Registry",
+        "description": "按 cn_stock_universe 逐只拉日线写入 cache/hist（走 daily_bar_raw / mootdx）。需先同步证券主表。\n· 默认：从约 3 年前至今（与指标作业一致）。\n· 区间：填开始日（结束日可选）。\n命令行另支持 --limit --workers。",
+    },
+    {
         "id": "basic_data_daily_job",
         "script": "basic_data_daily_job.py",
         "title": "股票/ETF 快照",
@@ -448,6 +462,31 @@ def retry_from_run(run_id: str) -> Dict[str, Any]:
     )
 
 
+def _mootdx_bars_cli_args(
+    date_mode: str, date_start: str, date_end: str
+) -> List[str]:
+    """mootdx_bars_sync_job 使用 --from-date/--to-date，与按日作业的位置参数不同。"""
+    import datetime
+
+    import instock.lib.trade_time as trd
+
+    dm = (date_mode or "default").strip().lower()
+    if dm == "default":
+        today = datetime.date.today().isoformat()
+        ds, _ = trd.get_trade_hist_interval(today)
+        return ["--from-date", ds]
+    if dm == "range":
+        ds = (date_start or "").strip()
+        de = (date_end or "").strip()
+        if not ds:
+            raise ValueError("区间模式需要开始日期 YYYY-MM-DD（结束日期可选）")
+        args = ["--from-date", ds]
+        if de:
+            args.extend(["--to-date", de])
+        return args
+    raise ValueError("mootdx 遍历拉 K 线请使用「默认」或「区间」日期模式")
+
+
 def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, date_list: str) -> List[str]:
     job = next((j for j in JOB_ITEMS if j["id"] == job_id), None)
     if not job:
@@ -456,7 +495,10 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
     if not os.path.isfile(script_path):
         raise FileNotFoundError(f"找不到脚本: {script_path}")
     cmd = [sys.executable, script_path]
-    if job_id in ("init_job", "sync_trade_calendar_job"):
+    if job_id in ("init_job", "sync_trade_calendar_job", "sync_stock_universe_job"):
+        return cmd
+    if job_id == "mootdx_bars_sync_job":
+        cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
         return cmd
     dm = (date_mode or "default").strip().lower()
     if dm == "default":
@@ -491,6 +533,18 @@ def _worker(run_id: str) -> None:
         env["INSTOCK_SPOT_DATA_SOURCE"] = normalize_spot_source(run.get("spot_data_source") or "")
         env.setdefault("INSTOCK_QUALITY_STRICT", "1")
         env.setdefault("INSTOCK_MAX_CONSECUTIVE_FETCH_FAIL", "5")
+    elif run.get("job_id") == "mootdx_bars_sync_job":
+        env["INSTOCK_USE_DATA_REGISTRY"] = "1"
+        env["INSTOCK_BAR_MODE"] = "raw"
+        env["INSTOCK_BARS_MOOTDX_ONLY"] = "1"
+        try:
+            from instock.core.sync_preferences import read_prefs
+
+            push2 = (read_prefs().get("eastmoney_push2_host") or "").strip()
+            if push2 and push2 not in ("", "auto"):
+                env["INSTOCK_EM_PUSH2_HOST"] = push2
+        except Exception:
+            pass
     cmd = list(run["command"])
     if cmd and cmd[0] == sys.executable and (len(cmd) < 2 or cmd[1] != "-u"):
         cmd.insert(1, "-u")

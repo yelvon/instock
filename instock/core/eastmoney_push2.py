@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""东财 push2 行情节点：固定节点或 auto 顺序回退（82 → 88 → 80）。"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any, Dict, List, Optional
+
+_log = logging.getLogger(__name__)
+
+PUSH2_HOST_CHOICES: tuple[str, ...] = ("82", "88", "80")
+AUTO_HOST_ORDER: tuple[str, ...] = ("82", "88", "80")
+CLIST_PATH = "/api/qt/clist/get"
+
+
+def normalize_push2_host(raw: Optional[str]) -> str:
+    s = (raw or "auto").strip().lower()
+    if s in ("auto", "automatic", "fallback", "自动"):
+        return "auto"
+    if s in PUSH2_HOST_CHOICES:
+        return s
+    return "auto"
+
+
+def resolve_host_sequence(preference: Optional[str] = None) -> List[str]:
+    pref = normalize_push2_host(preference)
+    if pref != "auto":
+        return [pref]
+    order_env = os.environ.get("INSTOCK_EM_PUSH2_FALLBACK_ORDER", "").strip()
+    if order_env:
+        hosts = [
+            h.strip()
+            for h in order_env.split(",")
+            if h.strip() in PUSH2_HOST_CHOICES
+        ]
+        if hosts:
+            return hosts
+    return list(AUTO_HOST_ORDER)
+
+
+def read_push2_host_preference() -> str:
+    env = os.environ.get("INSTOCK_EM_PUSH2_HOST", "").strip()
+    if env:
+        return normalize_push2_host(env)
+    try:
+        from instock.web.sync_preferences import read_prefs
+
+        return normalize_push2_host(read_prefs().get("eastmoney_push2_host"))
+    except Exception:
+        return "auto"
+
+
+def clist_get_url(host_id: str) -> str:
+    return f"https://{host_id}.push2.eastmoney.com{CLIST_PATH}"
+
+
+# 探测专用：单节点超时（秒），auto 模式下最多尝试 len(AUTO_HOST_ORDER) 个节点
+PROBE_CONNECT_TIMEOUT = 3
+PROBE_READ_TIMEOUT = 8
+
+
+def probe_push2_clist(
+    preference: Optional[str] = None,
+    log: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    快速探测 clist 首屏；用于页面测试（后台线程），日志经 log(msg) 实时输出。
+    """
+    import time
+
+    from instock.core.eastmoney_fetcher import eastmoney_fetcher
+    from instock.web import sync_job_service as syncsvc
+
+    pref = normalize_push2_host(preference) if preference is not None else read_push2_host_preference()
+    hosts = resolve_host_sequence(pref)
+    cookie_info = syncsvc.read_eastmoney_cookie()
+    cookie_configured = bool(cookie_info.get("exists") and (cookie_info.get("bytes") or 0) > 0)
+
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+
+    params = {
+        "pn": 1,
+        "pz": 50,
+        "po": "1",
+        "np": "1",
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": "2",
+        "invt": "2",
+        "fid": "f12",
+        "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
+        "fields": "f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f14,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25,f26,f37,f38,f39,f40,f41,f45,f46,f48,f49,f57,f61,f100,f112,f113,f114,f115,f221",
+        "_": "1623833739532",
+    }
+    timeout = (PROBE_CONNECT_TIMEOUT, PROBE_READ_TIMEOUT)
+    fetcher = eastmoney_fetcher()
+    t_all = time.time()
+    last_err: Optional[str] = None
+
+    for host in hosts:
+        url = clist_get_url(host)
+        _log(f"请求 {host}.push2.eastmoney.com …")
+        t0 = time.time()
+        try:
+            r = fetcher.make_probe_request(url, params=params, timeout=timeout)
+            elapsed = int((time.time() - t0) * 1000)
+            data_json = r.json()
+            data_block = data_json.get("data") if isinstance(data_json, dict) else None
+            diff = (data_block or {}).get("diff") if isinstance(data_block, dict) else None
+            rows = len(diff) if isinstance(diff, list) else 0
+            total = int((data_block or {}).get("total") or 0) if isinstance(data_block, dict) else 0
+            if rows > 0:
+                _log(f"  成功 HTTP {r.status_code}，首屏 {rows} 条，全市场约 {total} 只，{elapsed}ms")
+                return {
+                    "ok": True,
+                    "provider_id": "eastmoney",
+                    "healthcheck": True,
+                    "rows": rows,
+                    "total": total,
+                    "elapsed_ms": int((time.time() - t_all) * 1000),
+                    "cookie_configured": cookie_configured,
+                    "cookie_bytes": int(cookie_info.get("bytes") or 0),
+                    "push2_preference": pref,
+                    "push2_host": host,
+                    "error": None,
+                }
+            last_err = "返回 data.diff 为空"
+            _log(f"  失败：{last_err}（{elapsed}ms）")
+        except Exception as e:
+            elapsed = int((time.time() - t0) * 1000)
+            last_err = str(e)
+            short = last_err if len(last_err) < 160 else last_err[:160] + "…"
+            _log(f"  失败：{short}（{elapsed}ms）")
+
+    if pref == "auto":
+        _log("auto 模式下全部节点不可用")
+    return {
+        "ok": False,
+        "provider_id": "eastmoney",
+        "healthcheck": False,
+        "rows": 0,
+        "total": 0,
+        "elapsed_ms": int((time.time() - t_all) * 1000),
+        "cookie_configured": cookie_configured,
+        "cookie_bytes": int(cookie_info.get("bytes") or 0),
+        "push2_preference": pref,
+        "push2_host": None,
+        "error": last_err or "无可用 push2 节点",
+    }
+
+
+class Push2ClistRouter:
+    """按偏好选择 push2 节点；auto 模式下失败则依次尝试其它节点，成功后分页复用同一节点。"""
+
+    def __init__(self, preference: Optional[str] = None) -> None:
+        self.preference = (
+            normalize_push2_host(preference) if preference is not None else read_push2_host_preference()
+        )
+        self._active_host: Optional[str] = None
+
+    @property
+    def active_host(self) -> Optional[str]:
+        return self._active_host
+
+    def make_request(self, fetcher: Any, params: Dict[str, Any], **kwargs: Any) -> Any:
+        if self._active_host:
+            return fetcher.make_request(
+                clist_get_url(self._active_host), params=params, **kwargs
+            )
+        last_exc: Optional[Exception] = None
+        for host in resolve_host_sequence(self.preference):
+            try:
+                hop_kw = dict(kwargs)
+                hop_kw.setdefault("retry", 1)
+                hop_kw.setdefault("timeout", (5, 15))
+                r = fetcher.make_request(
+                    clist_get_url(host), params=params, **hop_kw
+                )
+                self._active_host = host
+                _log.info("eastmoney push2: 使用节点 %s.push2.eastmoney.com", host)
+                return r
+            except Exception as e:
+                last_exc = e
+                _log.warning("eastmoney push2: 节点 %s 不可用: %s", host, e)
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("无可用东财 push2 节点")

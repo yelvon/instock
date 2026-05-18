@@ -11,6 +11,7 @@ import pandas as pd
 import math
 from functools import lru_cache
 from instock.core.eastmoney_fetcher import eastmoney_fetcher
+from instock.core.eastmoney_push2 import Push2ClistRouter
 
 __author__ = 'myh '
 __date__ = '2025/12/31 '
@@ -25,7 +26,7 @@ def stock_zh_a_spot_em() -> pd.DataFrame:
     :return: 实时行情
     :rtype: pandas.DataFrame
     """
-    url = "https://82.push2.eastmoney.com/api/qt/clist/get"
+    push2 = Push2ClistRouter()
     page_size = 50
     page_current = 1
     params = {
@@ -41,7 +42,7 @@ def stock_zh_a_spot_em() -> pd.DataFrame:
         "fields": "f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f14,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25,f26,f37,f38,f39,f40,f41,f45,f46,f48,f49,f57,f61,f100,f112,f113,f114,f115,f221",
         "_": "1623833739532",
     }
-    r =  fetcher.make_request(url, params=params)
+    r = push2.make_request(fetcher, params=params)
     data_json = r.json()
     data = data_json["data"]["diff"]
     if not data:
@@ -54,7 +55,7 @@ def stock_zh_a_spot_em() -> pd.DataFrame:
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r =  fetcher.make_request(url, params=params)
+        r = push2.make_request(fetcher, params=params)
         data_json = r.json()
         _data = data_json["data"]["diff"]
         data.extend(_data)
@@ -196,7 +197,7 @@ def code_id_map_em() -> dict:
     :return: 股票和市场代码
     :rtype: dict
     """
-    url = "https://80.push2.eastmoney.com/api/qt/clist/get"
+    push2 = Push2ClistRouter()
     page_size = 50
     page_current = 1
     params = {
@@ -212,7 +213,7 @@ def code_id_map_em() -> dict:
         "fields": "f12",
         "_": "1623833739532",
     }
-    r =  fetcher.make_request(url, params=params)
+    r = push2.make_request(fetcher, params=params)
     data_json = r.json()
     data = data_json["data"]["diff"]
     if not data:

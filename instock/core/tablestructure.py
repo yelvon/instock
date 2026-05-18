@@ -295,6 +295,18 @@ TABLE_CN_STOCK_FOREIGN_KEY = {'name': 'cn_stock_foreign_key', 'cn': '股票外�
                                           'code': {'type': VARCHAR(6, _COLLATE), 'cn': '代码', 'size': 60},
                                           'name': {'type': VARCHAR(20, _COLLATE), 'cn': '名称', 'size': 70}}}
 
+TABLE_CN_STOCK_UNIVERSE = {
+    'name': 'cn_stock_universe',
+    'cn': 'A股证券主表',
+    'columns': {
+        'code': {'type': VARCHAR(6, _COLLATE), 'cn': '代码', 'size': 60},
+        'name': {'type': VARCHAR(32, _COLLATE), 'cn': '名称', 'size': 80},
+        'market': {'type': VARCHAR(8, _COLLATE), 'cn': '市场SH/SZ', 'size': 20},
+        'source_provider': {'type': VARCHAR(32, _COLLATE), 'cn': '列表来源', 'size': 40},
+        'updated_at': {'type': DATETIME, 'cn': '更新时间', 'size': 0},
+    },
+}
+
 TABLE_CN_STOCK_BACKTEST_DATA = {'name': 'cn_stock_backtest_data', 'cn': '股票回归测试数据',
                                 'columns': {'rate_%s' % i: {'type': FLOAT, 'cn': '%s日收益率' % i, 'size': 100} for i in
                                             range(1, RATE_FIELDS_COUNT + 1, 1)}}

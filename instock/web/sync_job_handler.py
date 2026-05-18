@@ -424,6 +424,122 @@ class DataGovernanceEnvApiHandler(webBase.BaseHandler, ABC):
         )
 
 
+class MootdxProbeApiHandler(webBase.BaseHandler, ABC):
+    """POST {mode: auto|local|online} 启动 mootdx 探测；GET ?id= 轮询日志。"""
+
+    def post(self):
+        import instock.web.mootdx_probe_service as mps
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            body = {}
+        mode = (body.get("mode") or "auto").strip().lower()
+        probe_id = mps.start_probe(mode)
+        self.write(
+            json.dumps(
+                {"ok": True, "probe_id": probe_id, "mode": mode},
+                ensure_ascii=False,
+            )
+        )
+
+    def get(self):
+        import instock.web.mootdx_probe_service as mps
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        probe_id = (self.get_argument("id", "") or "").strip()
+        if not probe_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
+            return
+        snap = mps.get_probe(probe_id)
+        if not snap:
+            self.set_status(404)
+            self.write(json.dumps({"ok": False, "error": "探测不存在或已过期"}, ensure_ascii=False))
+            return
+        self.write(json.dumps({"ok": True, **snap}, ensure_ascii=False))
+
+    def delete(self):
+        import instock.web.mootdx_probe_service as mps
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        probe_id = (self.get_argument("id", "") or "").strip()
+        if not probe_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
+            return
+        ok = mps.cancel_probe(probe_id)
+        self.write(
+            json.dumps(
+                {"ok": ok, "message": "已请求取消" if ok else "无法取消"},
+                ensure_ascii=False,
+            )
+        )
+
+
+class EastmoneyProbeApiHandler(webBase.BaseHandler, ABC):
+    """
+    东财 push2 异步探测（不阻塞 Web 主线程）。
+    POST {} 或 {push2_host?} 启动；GET ?id= 轮询日志与结果；DELETE ?id= 取消。
+    """
+
+    def post(self):
+        import instock.web.eastmoney_probe_service as eps
+        from instock.core.eastmoney_push2 import normalize_push2_host, read_push2_host_preference
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            body = {}
+        pref = normalize_push2_host(
+            body.get("push2_host") or read_push2_host_preference()
+        )
+        probe_id = eps.start_probe(pref)
+        self.write(
+            json.dumps(
+                {
+                    "ok": True,
+                    "probe_id": probe_id,
+                    "push2_preference": pref,
+                    "message": "探测已在后台启动，请轮询本接口 GET ?id= 查看实时日志",
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    def get(self):
+        import instock.web.eastmoney_probe_service as eps
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        probe_id = (self.get_argument("id", "") or "").strip()
+        if not probe_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
+            return
+        snap = eps.get_probe(probe_id)
+        if not snap:
+            self.set_status(404)
+            self.write(json.dumps({"ok": False, "error": "探测不存在或已过期"}, ensure_ascii=False))
+            return
+        self.write(json.dumps({"ok": True, **snap}, ensure_ascii=False))
+
+    def delete(self):
+        import instock.web.eastmoney_probe_service as eps
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        probe_id = (self.get_argument("id", "") or "").strip()
+        if not probe_id:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
+            return
+        if eps.cancel_probe(probe_id):
+            self.write(json.dumps({"ok": True, "message": "已请求取消"}, ensure_ascii=False))
+        else:
+            self.write(json.dumps({"ok": False, "error": "无法取消（可能已结束）"}, ensure_ascii=False))
+
+
 class DataSourcesApiHandler(webBase.BaseHandler, ABC):
     """GET 多源 Registry 状态；POST body {provider_id, code?} 触发连通性检测。"""
 
@@ -452,6 +568,26 @@ class DataSourcesApiHandler(webBase.BaseHandler, ABC):
         if not pid:
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": "缺少 provider_id"}, ensure_ascii=False))
+            return
+        if pid == "eastmoney":
+            import instock.web.eastmoney_probe_service as eps
+            from instock.core.eastmoney_push2 import normalize_push2_host, read_push2_host_preference
+
+            pref = normalize_push2_host(
+                body.get("push2_host") or read_push2_host_preference()
+            )
+            probe_id = eps.start_probe(pref)
+            self.write(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "async": True,
+                        "probe_id": probe_id,
+                        "push2_preference": pref,
+                    },
+                    ensure_ascii=False,
+                )
+            )
             return
         try:
             out = dss.verify_provider(pid, code)

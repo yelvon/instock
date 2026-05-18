@@ -63,13 +63,14 @@ def record_batch(
     enrich = result.metadata.get("enrich_providers") or []
     if isinstance(enrich, str):
         enrich = [enrich]
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     sql = """
     INSERT INTO `data_batch` (
       `batch_id`, `domain_id`, `trade_date`, `date_from`, `date_to`,
       `scope_type`, `scope_key`, `row_count`, `source_provider`,
       `enrich_providers`, `mixed_source`, `adjust_type`, `profile`,
-      `input_batches`, `status`, `job_id`
-    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+      `input_batches`, `status`, `job_id`, `created_at`
+    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """
     params = (
         batch_id,
@@ -88,6 +89,7 @@ def record_batch(
         json.dumps(input_batches, ensure_ascii=False) if input_batches else None,
         "failed" if not result.ok else status,
         job_id,
+        now,
     )
     try:
         mdb.executeSql(sql, params)

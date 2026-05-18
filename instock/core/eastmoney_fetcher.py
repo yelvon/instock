@@ -115,6 +115,21 @@ class eastmoney_fetcher:
         session.headers.update(headers)
         return session
 
+    def make_probe_request(self, url, params=None, timeout=(3, 10)):
+        """
+        轻量探测请求：不走 Session 连接池重试，避免连通性测试长时间阻塞。
+        """
+        if timeout is None:
+            timeout = (3, 10)
+        headers = dict(self.session.headers)
+        return requests.get(
+            url,
+            params=params,
+            headers=headers,
+            proxies=self.proxies,
+            timeout=timeout,
+        )
+
     def make_request(self, url, params=None, retry=None, timeout=None):
         """
         发送请求

@@ -48,6 +48,25 @@ def is_a_stock(code):
     return code.startswith(('600', '601', '603', '605', '000', '001', '002', '003', '300', '301'))
 
 
+_INDEX_NAME_RE = __import__("re").compile(
+    r"指数|成指|综指|债指|债券|债$|基金|ETF|B股|A股指数|可转债",
+    __import__("re").I,
+)
+
+
+def is_tradeable_a_share(code: str, name: str = "") -> bool:
+    """可交易 A 股（排除指数、债、基金等；mootdx 列表里大量 000xxx 为深证指数）。"""
+    code = str(code).zfill(6)[:6]
+    if not is_a_stock(code):
+        return False
+    if code.startswith(("399", "999")):
+        return False
+    n = (name or "").strip().replace("\x00", "")
+    if n and _INDEX_NAME_RE.search(n):
+        return False
+    return True
+
+
 # 过滤掉 st 股票。
 def is_not_st(name):
     return not name.startswith(('*ST', 'ST'))
@@ -433,6 +452,25 @@ def fetch_stock_hist(data_base, date_start=None, is_cache=True):
     return None
 
 
+def _align_hist_dataframe(stock: pd.DataFrame) -> pd.DataFrame:
+    """统一为 CN_STOCK_HIST_DATA 的 11 列（含 date 列，与东财 hist 一致）。"""
+    hist_cols = list(tbs.CN_STOCK_HIST_DATA["columns"].keys())
+    out = stock.copy()
+    if "date" not in out.columns:
+        out = out.reset_index()
+        if "index" in out.columns:
+            out = out.rename(columns={"index": "date"})
+        elif out.columns[0] not in hist_cols:
+            out = out.rename(columns={out.columns[0]: "date"})
+    for c in hist_cols:
+        if c not in out.columns:
+            out[c] = np.nan
+    out = out[hist_cols]
+    if "date" in out.columns:
+        out = out.sort_values("date")
+    return out
+
+
 # 增加读取股票缓存方法。加快处理速度。多线程解决效率
 def stock_hist_cache(code, date_start, date_end=None, is_cache=True, adjust=''):
     cache_dir = os.path.join(stock_hist_cache_path, date_start[0:6], date_start)
@@ -484,6 +522,10 @@ def stock_hist_cache(code, date_start, date_end=None, is_cache=True, adjust=''):
                 except Exception as e:
                     logging.warning("stock_hist_cache registry: %s", e)
             if stock is None:
+                from instock.core.data.profile import bars_mootdx_only
+
+                if bars_mootdx_only():
+                    return None
                 em_adj = adjust if adjust else ("qfq" if not use_reg else "")
                 if date_end is not None:
                     stock = she.stock_zh_a_hist(
@@ -504,8 +546,7 @@ def stock_hist_cache(code, date_start, date_end=None, is_cache=True, adjust=''):
 
             if stock is None or len(stock.index) == 0:
                 return None
-            stock.columns = tuple(tbs.CN_STOCK_HIST_DATA['columns'])
-            stock = stock.sort_index()  # 将数据按照日期排序下。
+            stock = _align_hist_dataframe(stock)
             try:
                 if is_cache and provider_used == "eastmoney":
                     stock.to_pickle(cache_file, compression="gzip")

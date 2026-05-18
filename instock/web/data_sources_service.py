@@ -186,9 +186,20 @@ def build_report() -> Dict[str, Any]:
     except Exception:
         pass
 
+    from instock.core.eastmoney_push2 import (
+        AUTO_HOST_ORDER,
+        PUSH2_HOST_CHOICES,
+        read_push2_host_preference,
+    )
+
     return {
         "ok": True,
         "mootdx_installed": mootdx_ok,
+        "eastmoney_push2": {
+            "preference": read_push2_host_preference(),
+            "choices": ["auto", *PUSH2_HOST_CHOICES],
+            "auto_order": list(AUTO_HOST_ORDER),
+        },
         "profile": profile,
         "bar_mode": bar_mode,
         "use_data_registry": use_reg,
@@ -215,8 +226,17 @@ def build_report() -> Dict[str, Any]:
     }
 
 
+def verify_eastmoney() -> Dict[str, Any]:
+    """同步快速探测（无实时日志）。页面测试请用 eastmoney_probe_service 后台接口。"""
+    from instock.core.eastmoney_push2 import probe_push2_clist, read_push2_host_preference
+
+    return probe_push2_clist(read_push2_host_preference())
+
+
 def verify_provider(provider_id: str, code: str = "600000") -> Dict[str, Any]:
     """页面触发的单项连通性检测。"""
+    if provider_id == "eastmoney":
+        return verify_eastmoney()
     if provider_id == "mootdx_local":
         from instock.core.data.providers.mootdx_local import Provider
 

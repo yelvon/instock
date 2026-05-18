@@ -22,7 +22,10 @@ def _ensure_dir() -> None:
 
 
 def _defaults() -> Dict[str, Any]:
-    return {"default_spot_data_source": "eastmoney"}
+    return {
+        "default_spot_data_source": "eastmoney",
+        "eastmoney_push2_host": "auto",
+    }
 
 
 def _read_file_unlocked() -> Dict[str, Any]:
@@ -39,6 +42,11 @@ def _read_file_unlocked() -> Dict[str, Any]:
         from instock.core.spot_source import normalize_spot_source
 
         out["default_spot_data_source"] = normalize_spot_source(str(raw))
+        from instock.core.eastmoney_push2 import normalize_push2_host
+
+        out["eastmoney_push2_host"] = normalize_push2_host(
+            str(out.get("eastmoney_push2_host") or "auto")
+        )
         return out
     except Exception:
         return _defaults()
@@ -57,6 +65,12 @@ def write_prefs(updates: Dict[str, Any]) -> Dict[str, Any]:
 
             cur["default_spot_data_source"] = normalize_spot_source(
                 str(updates.get("default_spot_data_source") or "eastmoney")
+            )
+        if "eastmoney_push2_host" in updates:
+            from instock.core.eastmoney_push2 import normalize_push2_host
+
+            cur["eastmoney_push2_host"] = normalize_push2_host(
+                str(updates.get("eastmoney_push2_host") or "auto")
             )
         _ensure_dir()
         with open(_PREFS_PATH, "w", encoding="utf-8") as f:

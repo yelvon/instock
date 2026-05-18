@@ -4,6 +4,16 @@ import { useRouter } from "vue-router";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
+import {
+  cancelEastmoneyProbe,
+  runEastmoneyProbePoll,
+  startEastmoneyProbe,
+} from "@/api/eastmoneyProbe";
+import {
+  cancelMootdxProbe,
+  runMootdxProbePoll,
+  startMootdxProbe,
+} from "@/api/mootdxProbe";
 
 const router = useRouter();
 const activeTab = ref("manual");
@@ -195,6 +205,14 @@ const dsReport = ref<{
 } | null>(null);
 const verifyCode = ref("600000");
 const verifyMsg = ref("");
+const emProbing = ref(false);
+const emProbeLogs = ref("");
+const emProbeId = ref("");
+let stopEmProbePoll: (() => void) | null = null;
+const mootdxProbing = ref(false);
+const mootdxProbeLogs = ref("");
+const mootdxProbeId = ref("");
+let stopMootdxProbePoll: (() => void) | null = null;
 
 const domainOptions = [
   { value: "", label: "全部域" },
@@ -303,7 +321,113 @@ async function loadDataSources() {
   }
 }
 
+function teardownEmProbe() {
+  if (stopEmProbePoll) {
+    stopEmProbePoll();
+    stopEmProbePoll = null;
+  }
+}
+
+function teardownMootdxProbe() {
+  if (stopMootdxProbePoll) {
+    stopMootdxProbePoll();
+    stopMootdxProbePoll = null;
+  }
+}
+
+async function runMootdxProbe(mode: "auto" | "local" | "online") {
+  if (mootdxProbing.value) return;
+  teardownMootdxProbe();
+  mootdxProbing.value = true;
+  mootdxProbeLogs.value = "";
+  verifyMsg.value = `mootdx(${mode}) 后台探测中…`;
+  try {
+    const start = await startMootdxProbe(mode);
+    if (!start.ok || !start.probe_id) {
+      verifyMsg.value = start.error || "启动失败";
+      mootdxProbing.value = false;
+      return;
+    }
+    mootdxProbeId.value = start.probe_id;
+    stopMootdxProbePoll = runMootdxProbePoll(start.probe_id, (snap) => {
+      mootdxProbeLogs.value = (snap.logs || []).join("\n");
+      if (!snap.done) return;
+      mootdxProbing.value = false;
+      teardownMootdxProbe();
+      const res = snap.result || {};
+      if (snap.status === "success" && res.ok) {
+        const extra =
+          res.universe_online != null
+            ? `；在线列表约 ${res.universe_online} 只`
+            : res.universe_scan != null
+              ? `；本地扫描约 ${res.universe_scan} 只`
+              : "";
+        verifyMsg.value = `${res.provider_id || mode} OK：样本 ${res.rows} 行${extra}`;
+        ElMessage.success("mootdx 可用");
+      } else if (snap.status !== "cancelled") {
+        verifyMsg.value = res.error || "mootdx 不可用";
+        ElMessage.error(verifyMsg.value);
+      } else {
+        verifyMsg.value = "已取消 mootdx 探测";
+      }
+      void loadDataSources();
+    });
+  } catch (e) {
+    verifyMsg.value = String(e);
+    mootdxProbing.value = false;
+    teardownMootdxProbe();
+  }
+}
+
 async function verifyProvider(providerId: string) {
+  if (providerId === "eastmoney") {
+    if (emProbing.value) return;
+    teardownEmProbe();
+    emProbing.value = true;
+    emProbeLogs.value = "";
+    verifyMsg.value = "东财探测已在后台运行…";
+    try {
+      const start = await startEastmoneyProbe();
+      if (!start.ok || !start.probe_id) {
+        verifyMsg.value = start.error || "启动失败";
+        emProbing.value = false;
+        return;
+      }
+      emProbeId.value = start.probe_id;
+      stopEmProbePoll = runEastmoneyProbePoll(start.probe_id, (snap) => {
+        emProbeLogs.value = (snap.logs || []).join("\n");
+        if (!snap.done) return;
+        emProbing.value = false;
+        teardownEmProbe();
+        const res = snap.result || {};
+        if (snap.status === "success" && res.ok) {
+          const nodeHint =
+            res.push2_preference === "auto"
+              ? `auto→${res.push2_host || "—"}`
+              : String(res.push2_host || res.push2_preference);
+          verifyMsg.value = `东财 OK：${res.rows} 条 / 约 ${res.total} 只，${res.elapsed_ms}ms，节点 ${nodeHint}`;
+          ElMessage.success("东财接口可用");
+        } else {
+          verifyMsg.value = res.error || "东财不可用";
+          ElMessage.error(verifyMsg.value);
+        }
+        void loadDataSources();
+      });
+    } catch (e) {
+      verifyMsg.value = String(e);
+      emProbing.value = false;
+      teardownEmProbe();
+    }
+    return;
+  }
+  if (providerId === "mootdx_local") {
+    await runMootdxProbe("local");
+    return;
+  }
+  if (providerId === "mootdx_online") {
+    await runMootdxProbe("online");
+    return;
+  }
   verifyMsg.value = `检测 ${providerId}…`;
   try {
     const r = await fetch("/instock/api/sync/data_sources", {
@@ -312,7 +436,7 @@ async function verifyProvider(providerId: string) {
       body: JSON.stringify({ provider_id: providerId, code: verifyCode.value.trim() || "600000" }),
     });
     const j = await r.json();
-    if (j.ok) {
+    if (j.ok && !j.async) {
       verifyMsg.value = `${providerId}：样本 ${j.rows} 行，healthcheck=${j.healthcheck}`;
       ElMessage.success(verifyMsg.value);
     } else {
@@ -465,7 +589,13 @@ async function showDetail(id: string) {
 
 async function triggerRun() {
   let dm = dateMode.value;
-  if (jobId.value === "init_job" || jobId.value === "sync_trade_calendar_job") dm = "default";
+  if (
+    jobId.value === "init_job" ||
+    jobId.value === "sync_trade_calendar_job" ||
+    jobId.value === "sync_stock_universe_job"
+  ) {
+    dm = "default";
+  }
   const payload: Record<string, string> = {
     job_id: jobId.value,
     date_mode: dm,
@@ -616,7 +746,11 @@ onMounted(async () => {
   void loadGovEnv();
 });
 
-onUnmounted(() => stopPoll());
+onUnmounted(() => {
+  stopPoll();
+  teardownEmProbe();
+  teardownMootdxProbe();
+});
 </script>
 
 <template>
@@ -682,12 +816,26 @@ onUnmounted(() => stopPoll());
             <el-form-item label="日期">
               <el-radio-group
                 v-model="dateMode"
-                :disabled="jobId === 'init_job' || jobId === 'sync_trade_calendar_job'"
+                :disabled="
+                  jobId === 'init_job' ||
+                  jobId === 'sync_trade_calendar_job' ||
+                  jobId === 'sync_stock_universe_job'
+                "
               >
                 <el-radio-button label="default">默认</el-radio-button>
-                <el-radio-button label="list">枚举</el-radio-button>
+                <el-radio-button label="list" :disabled="jobId === 'mootdx_bars_sync_job'">
+                  枚举
+                </el-radio-button>
                 <el-radio-button label="range">区间</el-radio-button>
               </el-radio-group>
+              <el-text
+                v-if="jobId === 'mootdx_bars_sync_job'"
+                size="small"
+                type="info"
+                style="display: block; margin-top: 6px"
+              >
+                默认从约 3 年前拉至今；区间只需填开始日（结束可选）。请先跑「同步证券主表」。
+              </el-text>
             </el-form-item>
             <el-form-item v-if="dateMode === 'list'" label="枚举">
               <el-input v-model="dateList" placeholder="2024-06-01,2024-06-03" />
@@ -841,13 +989,41 @@ onUnmounted(() => stopPoll());
             title="K 线尚未走 Registry：请设置 INSTOCK_USE_DATA_REGISTRY=1 或 INSTOCK_BAR_MODE=raw 并重启容器"
           />
 
+          <el-card v-if="dsReport" shadow="never" class="mt src-card">
+            <template #header>
+              <div class="card-head">
+                <span>东方财富（A 股快照 / push2）</span>
+                <el-button
+                  size="small"
+                  type="success"
+                  plain
+                  :loading="emProbing"
+                  @click="verifyProvider('eastmoney')"
+                >
+                  测试东财接口
+                </el-button>
+              </div>
+            </template>
+            <el-text size="small" type="info">
+              请求行情列表首屏（与定时作业同源）；push2 节点在「数据同步 → 同步与快照偏好」配置；Cookie 在同页下方。
+            </el-text>
+            <el-text v-if="dsReport?.eastmoney_push2" size="small" type="info" class="mt">
+              当前节点偏好：{{ dsReport.eastmoney_push2.preference }}
+              <template v-if="dsReport.eastmoney_push2.preference === 'auto'">
+                （自动顺序 {{ (dsReport.eastmoney_push2.auto_order || []).join(" → ") }}）
+              </template>
+            </el-text>
+          </el-card>
+
           <el-row :gutter="16" class="mt" v-if="dsReport">
             <el-col :span="12">
               <el-card shadow="never" class="src-card">
                 <template #header>
                   <div class="card-head">
                     <span>mootdx_local（本地通达信）</span>
-                    <el-button size="small" @click="verifyProvider('mootdx_local')">连通性检测</el-button>
+                    <el-button size="small" :loading="mootdxProbing" @click="verifyProvider('mootdx_local')">
+                      连通性检测
+                    </el-button>
                   </div>
                 </template>
                 <el-descriptions :column="1" size="small" border>
@@ -880,7 +1056,9 @@ onUnmounted(() => stopPoll());
                 <template #header>
                   <div class="card-head">
                     <span>mootdx_online（在线 fallback）</span>
-                    <el-button size="small" @click="verifyProvider('mootdx_online')">连通性检测</el-button>
+                    <el-button size="small" :loading="mootdxProbing" @click="verifyProvider('mootdx_online')">
+                      连通性检测
+                    </el-button>
                   </div>
                 </template>
                 <el-descriptions :column="1" size="small" border>
@@ -976,6 +1154,9 @@ onUnmounted(() => stopPoll());
             <el-text size="small" type="info">文档：{{ dsReport.management.doc }}</el-text>
           </el-card>
           <el-text v-if="verifyMsg" size="small" class="mt">{{ verifyMsg }}</el-text>
+          <pre v-if="emProbeLogs || mootdxProbeLogs" class="log-pre soft mt">{{
+            emProbeLogs || mootdxProbeLogs
+          }}</pre>
         </el-tab-pane>
 
         <el-tab-pane label="数据血缘" name="lineage">

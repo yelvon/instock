@@ -15,6 +15,7 @@ import pandas as pd
 
 from instock.core.data.profile import (
     PROFILE_BACKTEST,
+    bars_mootdx_only,
     effective_data_profile,
     effective_bar_mode,
     tencent_enrich_enabled,
@@ -91,7 +92,10 @@ class DataRegistry:
         dom = (self._config.get("domains") or {}).get(domain_id) or {}
         prof_cfg = (dom.get("profiles") or {}).get(prof) or {}
         steps = [_step_from_dict(x) for x in (prof_cfg.get("chain") or [])]
-        return [s for s in steps if _step_applies(s)]
+        steps = [s for s in steps if _step_applies(s)]
+        if bars_mootdx_only() and domain_id in ("daily_bar_raw", "daily_bar"):
+            steps = [s for s in steps if s.provider_id in ("mootdx_local", "mootdx_online")]
+        return steps
 
     def resolve_enrich(self, domain_id: str, profile: Optional[str] = None) -> List[ChainStep]:
         prof = effective_data_profile(profile)

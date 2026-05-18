@@ -45,3 +45,13 @@ def tencent_enrich_enabled(profile: Optional[str] = None) -> bool:
 def tdx_dir() -> Optional[str]:
     p = os.environ.get("INSTOCK_TDX_DIR", "").strip()
     return p or None
+
+
+def bars_mootdx_only() -> bool:
+    """为 true 时 K 线只走 mootdx，不回退东财（避免 push2 82 阻塞遍历作业）。"""
+    return os.environ.get("INSTOCK_BARS_MOOTDX_ONLY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )

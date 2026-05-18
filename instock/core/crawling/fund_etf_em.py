@@ -11,6 +11,7 @@ from functools import lru_cache
 import math
 import pandas as pd
 from instock.core.eastmoney_fetcher import eastmoney_fetcher
+from instock.core.eastmoney_push2 import Push2ClistRouter
 
 __author__ = 'myh '
 __date__ = '2025/12/31 '
@@ -25,7 +26,7 @@ def fund_etf_spot_em() -> pd.DataFrame:
     :return: ETF 实时行情
     :rtype: pandas.DataFrame
     """
-    url = "https://88.push2.eastmoney.com/api/qt/clist/get"
+    push2 = Push2ClistRouter()
     page_size = 50
     page_current = 1
     params = {
@@ -42,7 +43,7 @@ def fund_etf_spot_em() -> pd.DataFrame:
         "fields": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152",
         "_": "1672806290972",
     }
-    r =  fetcher.make_request(url, params=params)
+    r = push2.make_request(fetcher, params=params)
     data_json = r.json()
 
     data = data_json["data"]["diff"]
@@ -56,7 +57,7 @@ def fund_etf_spot_em() -> pd.DataFrame:
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r =  fetcher.make_request(url, params=params)
+        r = push2.make_request(fetcher, params=params)
         data_json = r.json()
         _data = data_json["data"]["diff"]
         data.extend(_data)
@@ -123,7 +124,7 @@ def _fund_etf_code_id_map_em() -> dict:
     :return: ETF 代码和市场标识映射
     :rtype: pandas.DataFrame
     """
-    url = "https://88.push2.eastmoney.com/api/qt/clist/get"
+    push2 = Push2ClistRouter()
     params = {
         "pn": "1",
         "pz": "5000",
@@ -138,7 +139,7 @@ def _fund_etf_code_id_map_em() -> dict:
         "fields": "f12,f13",
         "_": "1672806290972",
     }
-    r =  fetcher.make_request(url, params=params)
+    r = push2.make_request(fetcher, params=params)
     data_json = r.json()
     temp_df = pd.DataFrame(data_json["data"]["diff"])
     temp_dict = dict(zip(temp_df["f12"], temp_df["f13"]))

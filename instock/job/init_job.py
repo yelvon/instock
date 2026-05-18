@@ -87,6 +87,12 @@ def main():
         ensure_data_batch_table()
     except Exception as e:
         logging.error(f"init_job: data_batch 建表异常：{e}")
+    try:
+        from instock.core.mootdx_universe import ensure_cn_stock_universe_table
+
+        ensure_cn_stock_universe_table()
+    except Exception as e:
+        logging.error(f"init_job: cn_stock_universe 建表异常：{e}")
     # 执行数据初始化。
 
 

@@ -3,6 +3,16 @@ import { ref, onMounted, onUnmounted, watch } from "vue";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
+import {
+  cancelEastmoneyProbe,
+  runEastmoneyProbePoll,
+  startEastmoneyProbe,
+} from "@/api/eastmoneyProbe";
+import {
+  cancelMootdxProbe,
+  runMootdxProbePoll,
+  startMootdxProbe,
+} from "@/api/mootdxProbe";
 
 interface JobItem {
   id: string;
@@ -61,6 +71,7 @@ const dateList = ref("");
 const dateStart = ref("");
 const dateEnd = ref("");
 const spotSource = ref("eastmoney");
+const emPush2Host = ref("auto");
 const runMsg = ref("");
 const runs = ref<RunRow[]>([]);
 const selectedRunIds = ref<string[]>([]);
@@ -97,6 +108,18 @@ const dhCli = ref("");
 const cookiePath = ref("");
 const cookieText = ref("");
 const cookieMsg = ref("");
+const eastmoneyTesting = ref(false);
+const eastmoneyTestMsg = ref("");
+const eastmoneyTestLogs = ref("");
+const eastmoneyProbeId = ref("");
+let stopEastmoneyProbe: (() => void) | null = null;
+
+const mootdxProbeMode = ref<"auto" | "local" | "online">("auto");
+const mootdxTesting = ref(false);
+const mootdxTestMsg = ref("");
+const mootdxTestLogs = ref("");
+const mootdxProbeId = ref("");
+let stopMootdxProbe: (() => void) | null = null;
 
 const schedGlobal = ref(true);
 const schedDraft = ref<ScheduleRow[]>([]);
@@ -123,7 +146,11 @@ function formatRunConditions(r: RunRow): string {
   if (r.trigger_source === "scheduler") {
     prefix = `【定时】${r.schedule_title || r.schedule_id || ""} · `;
   }
-  if (r.job_id === "init_job" || r.job_id === "sync_trade_calendar_job") {
+  if (
+    r.job_id === "init_job" ||
+    r.job_id === "sync_trade_calendar_job" ||
+    r.job_id === "sync_stock_universe_job"
+  ) {
     return prefix + "默认（初始化/日历）";
   }
   const dm = (r.date_mode || "default").toLowerCase();
@@ -179,16 +206,21 @@ async function loadPrefs() {
   try {
     const r = await fetch("/instock/api/sync/prefs");
     const j = await r.json();
-    if (j.ok && j.prefs?.default_spot_data_source) {
-      spotSource.value = j.prefs.default_spot_data_source;
-      prefsMsg.value = "已从服务器加载快照偏好";
+    if (j.ok && j.prefs) {
+      if (j.prefs.default_spot_data_source) {
+        spotSource.value = j.prefs.default_spot_data_source;
+      }
+      if (j.prefs.eastmoney_push2_host) {
+        emPush2Host.value = j.prefs.eastmoney_push2_host;
+      }
+      prefsMsg.value = "已从服务器加载同步偏好";
     }
   } catch {
     prefsMsg.value = "";
   }
 }
 
-watch(spotSource, () => {
+function savePrefsDebounced() {
   prefsMsg.value = "保存中…";
   if (prefsDebounce) clearTimeout(prefsDebounce);
   prefsDebounce = setTimeout(async () => {
@@ -196,7 +228,10 @@ watch(spotSource, () => {
       const r = await fetch("/instock/api/sync/prefs", {
         method: "POST",
         headers: { "Content-Type": "application/json;charset=UTF-8" },
-        body: JSON.stringify({ default_spot_data_source: spotSource.value }),
+        body: JSON.stringify({
+          default_spot_data_source: spotSource.value,
+          eastmoney_push2_host: emPush2Host.value,
+        }),
       });
       const j = await r.json();
       prefsMsg.value = j.ok ? "偏好已保存" : j.error || "保存失败";
@@ -204,7 +239,10 @@ watch(spotSource, () => {
       prefsMsg.value = "保存失败";
     }
   }, 400);
-});
+}
+
+watch(spotSource, savePrefsDebounced);
+watch(emPush2Host, savePrefsDebounced);
 
 async function loadRuns() {
   const r = await fetch("/instock/api/sync/runs?limit=80");
@@ -356,7 +394,11 @@ async function cancelRun() {
 async function triggerRun() {
   runMsg.value = "";
   let dm = dateMode.value;
-  if (jobId.value === "init_job" || jobId.value === "sync_trade_calendar_job") {
+  if (
+    jobId.value === "init_job" ||
+    jobId.value === "sync_trade_calendar_job" ||
+    jobId.value === "sync_stock_universe_job"
+  ) {
     dm = "default";
   }
   const payload: Record<string, string> = {
@@ -566,6 +608,135 @@ async function loadCookie() {
   } else cookieMsg.value = j.error || "读取失败";
 }
 
+function teardownEastmoneyProbe() {
+  if (stopEastmoneyProbe) {
+    stopEastmoneyProbe();
+    stopEastmoneyProbe = null;
+  }
+}
+
+async function testEastmoney() {
+  if (eastmoneyTesting.value) return;
+  teardownEastmoneyProbe();
+  eastmoneyTesting.value = true;
+  eastmoneyTestLogs.value = "";
+  eastmoneyTestMsg.value = "后台探测已启动（不阻塞其它操作）…";
+  try {
+    const start = await startEastmoneyProbe(emPush2Host.value);
+    if (!start.ok || !start.probe_id) {
+      eastmoneyTestMsg.value = start.error || "启动探测失败";
+      ElMessage.error(eastmoneyTestMsg.value);
+      eastmoneyTesting.value = false;
+      return;
+    }
+    eastmoneyProbeId.value = start.probe_id;
+    stopEastmoneyProbe = runEastmoneyProbePoll(start.probe_id, (snap) => {
+      eastmoneyTestLogs.value = (snap.logs || []).join("\n");
+      if (!snap.done) return;
+      eastmoneyTesting.value = false;
+      teardownEastmoneyProbe();
+      const res = snap.result || {};
+      if (snap.status === "success" && res.ok) {
+        const cookieHint = res.cookie_configured
+          ? `Cookie 已配置（${res.cookie_bytes} 字节）`
+          : "未配置 Cookie";
+        const nodeHint =
+          res.push2_preference === "auto"
+            ? `节点 auto → ${res.push2_host || "—"}.push2`
+            : `节点 ${res.push2_host || res.push2_preference}.push2`;
+        eastmoneyTestMsg.value = `连通正常：首屏 ${res.rows} 条，约 ${res.total} 只，${res.elapsed_ms}ms；${nodeHint}；${cookieHint}`;
+        ElMessage.success("东财接口可用");
+      } else if (snap.status === "cancelled") {
+        eastmoneyTestMsg.value = "已取消探测";
+      } else {
+        eastmoneyTestMsg.value = res.error || "东财接口不可用";
+        ElMessage.error(eastmoneyTestMsg.value);
+      }
+    });
+  } catch (e) {
+    eastmoneyTestMsg.value = String(e);
+    ElMessage.error(eastmoneyTestMsg.value);
+    eastmoneyTesting.value = false;
+    teardownEastmoneyProbe();
+  }
+}
+
+async function cancelEastmoneyProbeRun() {
+  if (eastmoneyProbeId.value) {
+    await cancelEastmoneyProbe(eastmoneyProbeId.value).catch(() => {});
+  }
+  teardownEastmoneyProbe();
+  eastmoneyTesting.value = false;
+  eastmoneyProbeId.value = "";
+  eastmoneyTestMsg.value = "已取消探测";
+}
+
+function teardownMootdxProbe() {
+  if (stopMootdxProbe) {
+    stopMootdxProbe();
+    stopMootdxProbe = null;
+  }
+}
+
+function onMootdxProbeDone(snap: { status: string; result?: Record<string, unknown> | null }) {
+  mootdxTesting.value = false;
+  teardownMootdxProbe();
+  const res = snap.result || {};
+  if (snap.status === "success" && res.ok) {
+    const extra =
+      res.universe_online != null
+        ? `在线列表约 ${res.universe_online} 只`
+        : res.universe_scan != null
+          ? `本地扫描约 ${res.universe_scan} 只`
+          : "";
+    mootdxTestMsg.value = `mootdx 可用（${res.provider_id || res.mode || "—"}）样本 K 线 ${res.rows} 行${extra ? `；${extra}` : ""}`;
+    ElMessage.success("mootdx 连通正常");
+  } else if (snap.status === "cancelled") {
+    mootdxTestMsg.value = "已取消探测";
+  } else {
+    mootdxTestMsg.value = String(res.error || "mootdx 不可用");
+    ElMessage.error(mootdxTestMsg.value);
+  }
+}
+
+async function testMootdx() {
+  if (mootdxTesting.value) return;
+  teardownMootdxProbe();
+  mootdxTesting.value = true;
+  mootdxTestLogs.value = "";
+  mootdxTestMsg.value = "后台探测已启动…";
+  try {
+    const start = await startMootdxProbe(mootdxProbeMode.value);
+    if (!start.ok || !start.probe_id) {
+      mootdxTestMsg.value = start.error || "启动探测失败";
+      ElMessage.error(mootdxTestMsg.value);
+      mootdxTesting.value = false;
+      return;
+    }
+    mootdxProbeId.value = start.probe_id;
+    stopMootdxProbe = runMootdxProbePoll(start.probe_id, (snap) => {
+      mootdxTestLogs.value = (snap.logs || []).join("\n");
+      if (!snap.done) return;
+      onMootdxProbeDone(snap);
+    });
+  } catch (e) {
+    mootdxTestMsg.value = String(e);
+    ElMessage.error(mootdxTestMsg.value);
+    mootdxTesting.value = false;
+    teardownMootdxProbe();
+  }
+}
+
+async function cancelMootdxProbeRun() {
+  if (mootdxProbeId.value) {
+    await cancelMootdxProbe(mootdxProbeId.value).catch(() => {});
+  }
+  teardownMootdxProbe();
+  mootdxTesting.value = false;
+  mootdxProbeId.value = "";
+  mootdxTestMsg.value = "已取消探测";
+}
+
 async function saveCookie() {
   cookieMsg.value = "保存中…";
   const r = await fetch("/instock/api/sync/cookie", {
@@ -710,7 +881,11 @@ onMounted(async () => {
   initDhDates();
 });
 
-onUnmounted(() => stopPoll());
+onUnmounted(() => {
+  stopPoll();
+  teardownEastmoneyProbe();
+  teardownMootdxProbe();
+});
 </script>
 
 <template>
@@ -730,6 +905,17 @@ onUnmounted(() => stopPoll());
             <el-option label="Baostock（宝上）" value="baostock" />
             <el-option label="东财优先，失败或空则 Baostock" value="auto" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="东财 push2 节点">
+          <el-select v-model="emPush2Host" style="width: 320px">
+            <el-option label="自动（82→88→80 回退）" value="auto" />
+            <el-option label="82.push2（默认）" value="82" />
+            <el-option label="88.push2" value="88" />
+            <el-option label="80.push2" value="80" />
+          </el-select>
+          <el-text size="small" type="info" style="display: block; margin-top: 6px">
+            全局生效：A 股/ETF 东财抓取、定时任务、接口测试均使用此节点（auto=82→88→80）。
+          </el-text>
         </el-form-item>
       </el-form>
       <el-text type="info" size="small">{{ prefsMsg }}</el-text>
@@ -836,15 +1022,55 @@ onUnmounted(() => stopPoll());
 
     <el-card shadow="never" class="block">
       <template #header>
+        <span>mootdx 连通测试</span>
+      </template>
+      <el-text size="small" type="info">
+        检测本地通达信（INSTOCK_TDX_DIR）或 mootdx 在线 K 线/证券列表；不阻塞页面。全市场代码请先执行作业「同步证券主表（mootdx）」。
+      </el-text>
+      <el-form label-width="100px" class="mt">
+        <el-form-item label="探测模式">
+          <el-select v-model="mootdxProbeMode" style="width: 280px" :disabled="mootdxTesting">
+            <el-option label="自动（先本地后在线）" value="auto" />
+            <el-option label="仅本地 mootdx_local" value="local" />
+            <el-option label="仅在线 mootdx_online" value="online" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-space wrap>
+        <el-button type="success" plain :loading="mootdxTesting" @click="testMootdx">
+          测试 mootdx
+        </el-button>
+        <el-button v-if="mootdxTesting" plain type="warning" @click="cancelMootdxProbeRun">
+          取消测试
+        </el-button>
+      </el-space>
+      <el-text v-if="mootdxTestMsg" size="small" type="info" class="mt" style="display: block">
+        {{ mootdxTestMsg }}
+      </el-text>
+      <pre v-if="mootdxTestLogs" class="log-pre soft mt probe-log">{{ mootdxTestLogs }}</pre>
+    </el-card>
+
+    <el-card shadow="never" class="block">
+      <template #header>
         <span>东方财富 Cookie</span>
       </template>
       <el-text size="small" type="info">{{ cookiePath }}</el-text>
       <el-input v-model="cookieText" type="textarea" :rows="4" class="mono mt" />
-      <el-space class="mt">
+      <el-space wrap class="mt">
         <el-button @click="loadCookie">重新加载</el-button>
         <el-button type="primary" @click="saveCookie">保存</el-button>
+        <el-button type="success" plain :loading="eastmoneyTesting" @click="testEastmoney">
+          测试东财接口
+        </el-button>
+        <el-button v-if="eastmoneyTesting" plain type="warning" @click="cancelEastmoneyProbeRun">
+          取消测试
+        </el-button>
         <el-text type="info">{{ cookieMsg }}</el-text>
       </el-space>
+      <el-text v-if="eastmoneyTestMsg" size="small" type="info" class="mt" style="display: block">
+        {{ eastmoneyTestMsg }}
+      </el-text>
+      <pre v-if="eastmoneyTestLogs" class="log-pre soft mt probe-log">{{ eastmoneyTestLogs }}</pre>
     </el-card>
 
     <el-card id="runner-anchor" shadow="never" class="block">
@@ -864,11 +1090,28 @@ onUnmounted(() => stopPoll());
           <el-text style="white-space: pre-wrap">{{ jobDesc() }}</el-text>
         </el-form-item>
         <el-form-item label="日期参数">
-          <el-radio-group v-model="dateMode" :disabled="jobId === 'init_job' || jobId === 'sync_trade_calendar_job'">
+          <el-radio-group
+            v-model="dateMode"
+            :disabled="
+              jobId === 'init_job' ||
+              jobId === 'sync_trade_calendar_job' ||
+              jobId === 'sync_stock_universe_job'
+            "
+          >
             <el-radio-button label="default">默认</el-radio-button>
-            <el-radio-button label="list">枚举</el-radio-button>
+            <el-radio-button label="list" :disabled="jobId === 'mootdx_bars_sync_job'">
+              枚举
+            </el-radio-button>
             <el-radio-button label="range">区间</el-radio-button>
           </el-radio-group>
+          <el-text
+            v-if="jobId === 'mootdx_bars_sync_job'"
+            size="small"
+            type="info"
+            style="display: block; margin-top: 6px"
+          >
+            默认从约 3 年前拉至今；区间只需填开始日（结束可选）。
+          </el-text>
         </el-form-item>
         <el-form-item v-if="dateMode === 'list'" label="枚举日期">
           <el-input v-model="dateList" placeholder="2024-06-01,2024-06-03" />
