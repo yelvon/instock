@@ -161,6 +161,7 @@ gf_client.json
 
 # 本地敏感配置（Cookie、代理等），勿提交
 eastmoney_cookie.txt
+tushare_token.txt
 proxy.txt
 *.tmp
 sync_preferences.json

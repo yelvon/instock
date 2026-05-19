@@ -14,8 +14,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from instock.core.data.profile import (
+    BAR_SOURCE_EASTMONEY,
+    BAR_SOURCE_MOOTDX,
+    BAR_SOURCE_TUSHARE,
     PROFILE_BACKTEST,
     bars_mootdx_only,
+    effective_bar_data_source,
     effective_data_profile,
     effective_bar_mode,
     tencent_enrich_enabled,
@@ -93,8 +97,14 @@ class DataRegistry:
         prof_cfg = (dom.get("profiles") or {}).get(prof) or {}
         steps = [_step_from_dict(x) for x in (prof_cfg.get("chain") or [])]
         steps = [s for s in steps if _step_applies(s)]
-        if bars_mootdx_only() and domain_id in ("daily_bar_raw", "daily_bar"):
-            steps = [s for s in steps if s.provider_id in ("mootdx_local", "mootdx_online")]
+        if domain_id in ("daily_bar_raw", "daily_bar"):
+            source = effective_bar_data_source()
+            if source == BAR_SOURCE_MOOTDX or bars_mootdx_only():
+                steps = [s for s in steps if s.provider_id in ("mootdx_local", "mootdx_online")]
+            elif source == BAR_SOURCE_TUSHARE:
+                steps = [s for s in steps if s.provider_id == "tushare"]
+            elif source == BAR_SOURCE_EASTMONEY:
+                steps = [s for s in steps if s.provider_id == "eastmoney"]
         return steps
 
     def resolve_enrich(self, domain_id: str, profile: Optional[str] = None) -> List[ChainStep]:

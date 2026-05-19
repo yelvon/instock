@@ -50,6 +50,7 @@ trusted-host = mirrors.aliyun.com" > /etc/pip.conf && \
     pip install pandas && \
     pip install urllib3 && \
     pip install tornado && \
+    pip install tushare && \
     pip install mini-racer && \
     pip install easytrader && \
     mkdir ta-lib && \

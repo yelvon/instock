@@ -456,6 +456,21 @@ def _align_hist_dataframe(stock: pd.DataFrame) -> pd.DataFrame:
     """统一为 CN_STOCK_HIST_DATA 的 11 列（含 date 列，与东财 hist 一致）。"""
     hist_cols = list(tbs.CN_STOCK_HIST_DATA["columns"].keys())
     out = stock.copy()
+    out = out.rename(
+        columns={
+            "日期": "date",
+            "开盘": "open",
+            "收盘": "close",
+            "最高": "high",
+            "最低": "low",
+            "成交量": "volume",
+            "成交额": "amount",
+            "振幅": "amplitude",
+            "涨跌幅": "quote_change",
+            "涨跌额": "ups_downs",
+            "换手率": "turnover",
+        }
+    )
     if "date" not in out.columns:
         out = out.reset_index()
         if "index" in out.columns:

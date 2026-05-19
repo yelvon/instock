@@ -17,10 +17,10 @@ _VALID = frozenset({SPOT_SOURCE_EASTMONEY, SPOT_SOURCE_BAOSTOCK, SPOT_SOURCE_AUT
 def normalize_spot_source(raw: Optional[str]) -> str:
     """将用户输入规范为 eastmoney / baostock / auto；无法识别时默认东财。"""
     if raw is None:
-        return SPOT_SOURCE_EASTMONEY
+        return SPOT_SOURCE_AUTO
     s = str(raw).strip().lower()
     if not s:
-        return SPOT_SOURCE_EASTMONEY
+        return SPOT_SOURCE_AUTO
     if s in ("eastmoney", "em", "dfc", "东财"):
         return SPOT_SOURCE_EASTMONEY
     if s in ("baostock", "bs", "bao", "宝上"):
@@ -35,7 +35,7 @@ def normalize_spot_source(raw: Optional[str]) -> str:
 def effective_spot_source(override: Optional[str] = None) -> str:
     """
     解析最终数据源。
-    ``override`` 非空时优先；否则读环境变量 ``INSTOCK_SPOT_DATA_SOURCE``（默认东财）。
+    ``override`` 非空时优先；否则读环境变量 ``INSTOCK_SPOT_DATA_SOURCE``（默认 auto）。
     """
     if override is not None and str(override).strip():
         return normalize_spot_source(override)

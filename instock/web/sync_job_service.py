@@ -87,9 +87,9 @@ JOB_ITEMS: List[Dict[str, str]] = [
     {
         "id": "mootdx_bars_sync_job",
         "script": "mootdx_bars_sync_job.py",
-        "title": "mootdx 遍历拉 K 线",
-        "hint": "依赖证券主表 + Registry",
-        "description": "按 cn_stock_universe 逐只拉日线写入 cache/hist（走 daily_bar_raw / mootdx）。需先同步证券主表。\n· 默认：从约 3 年前至今（与指标作业一致）。\n· 区间：填开始日（结束日可选）。\n命令行另支持 --limit --workers。",
+        "title": "遍历拉 K 线（日线）",
+        "hint": "依赖证券主表 + Registry，可选 mootdx/Tushare/东财",
+        "description": "按 cn_stock_universe 逐只拉日线写入 cache/hist（走 daily_bar_raw Registry）。需先同步证券主表。\n· 默认：从约 3 年前至今（与指标作业一致）。\n· 区间：填开始日（结束日可选）。\n· 日线源可选自动链路、仅 mootdx、仅 Tushare、仅东财。\n命令行另支持 --limit --workers。",
     },
     {
         "id": "basic_data_daily_job",
@@ -259,6 +259,7 @@ def _load() -> None:
                     item.setdefault("date_end", "")
                     item.setdefault("date_list", "")
                     item.setdefault("spot_data_source", "")
+                    item.setdefault("bar_data_source", "")
                     item.setdefault("trigger_source", "manual")
                     item.setdefault("schedule_id", "")
                     item.setdefault("schedule_title", "")
@@ -456,6 +457,7 @@ def retry_from_run(run_id: str) -> Dict[str, Any]:
         date_end=old.get("date_end") or "",
         date_list=old.get("date_list") or "",
         spot_data_source=old.get("spot_data_source") or "",
+        bar_data_source=old.get("bar_data_source") or "",
         trigger_source="manual",
         schedule_id="",
         schedule_title="",
@@ -485,6 +487,20 @@ def _mootdx_bars_cli_args(
             args.extend(["--to-date", de])
         return args
     raise ValueError("mootdx 遍历拉 K 线请使用「默认」或「区间」日期模式")
+
+
+def _bar_data_source_env(bar_data_source: str) -> Dict[str, str]:
+    from instock.core.data.profile import BAR_SOURCE_MOOTDX, normalize_bar_data_source
+
+    source = normalize_bar_data_source(bar_data_source)
+    env = {
+        "INSTOCK_USE_DATA_REGISTRY": "1",
+        "INSTOCK_BAR_MODE": "raw",
+        "INSTOCK_BAR_DATA_SOURCE": source,
+    }
+    if source == BAR_SOURCE_MOOTDX:
+        env["INSTOCK_BARS_MOOTDX_ONLY"] = "1"
+    return env
 
 
 def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, date_list: str) -> List[str]:
@@ -534,9 +550,7 @@ def _worker(run_id: str) -> None:
         env.setdefault("INSTOCK_QUALITY_STRICT", "1")
         env.setdefault("INSTOCK_MAX_CONSECUTIVE_FETCH_FAIL", "5")
     elif run.get("job_id") == "mootdx_bars_sync_job":
-        env["INSTOCK_USE_DATA_REGISTRY"] = "1"
-        env["INSTOCK_BAR_MODE"] = "raw"
-        env["INSTOCK_BARS_MOOTDX_ONLY"] = "1"
+        env.update(_bar_data_source_env(run.get("bar_data_source") or "auto"))
         try:
             from instock.core.sync_preferences import read_prefs
 
@@ -673,6 +687,7 @@ def start_job(
     date_end: str = "",
     date_list: str = "",
     spot_data_source: str = "",
+    bar_data_source: str = "",
     trigger_source: str = "manual",
     schedule_id: str = "",
     schedule_title: str = "",
@@ -685,6 +700,11 @@ def start_job(
         from instock.core.spot_source import SPOT_SOURCE_EASTMONEY, normalize_spot_source
 
         spot_saved = normalize_spot_source(spot_data_source or SPOT_SOURCE_EASTMONEY)
+    bar_saved = ""
+    if job_id == "mootdx_bars_sync_job":
+        from instock.core.data.profile import normalize_bar_data_source
+
+        bar_saved = normalize_bar_data_source(bar_data_source)
     rec: Dict[str, Any] = {
         "id": run_id,
         "job_id": job_id,
@@ -699,6 +719,7 @@ def start_job(
         "date_end": date_end,
         "date_list": date_list,
         "spot_data_source": spot_saved,
+        "bar_data_source": bar_saved,
         "trigger_source": (trigger_source or "manual").strip() or "manual",
         "schedule_id": (schedule_id or "").strip(),
         "schedule_title": (schedule_title or "").strip()[:200],

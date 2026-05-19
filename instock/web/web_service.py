@@ -32,6 +32,7 @@ import instock.web.scheduler_service as schedulerService
 import instock.web.vue_spa_handler as vueSpaHandler
 import instock.web.nav_api_handler as navApiHandler
 import instock.web.table_meta_handler as tableMetaHandler
+import instock.web.backtest_handler as backtestHandler
 import tornado.web
 
 __author__ = 'myh '
@@ -76,6 +77,9 @@ class Application(tornado.web.Application):
             (r"/instock/api/nav", navApiHandler.NavApiHandler),
             (r"/instock/api/table_meta", tableMetaHandler.TableMetaHandler),
             (r"/instock/api/kline_bundle", tableMetaHandler.KlineBundleApiHandler),
+            (r"/instock/api/backtest/runs", backtestHandler.BacktestRunsApiHandler),
+            (r"/instock/api/backtest/runs/([^/]+)/cancel", backtestHandler.BacktestRunCancelApiHandler),
+            (r"/instock/api/backtest/runs/([^/]+)", backtestHandler.BacktestRunDetailApiHandler),
             (r"/instock/app/assets/(.*)", tornado.web.StaticFileHandler, {"path": _VUE_ASSETS}),
             (r"/instock/app/?(.*)", vueSpaHandler.VueIndexHandler),
         ]

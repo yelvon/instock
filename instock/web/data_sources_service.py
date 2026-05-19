@@ -151,6 +151,62 @@ def _mootdx_online_detail() -> Dict[str, Any]:
     return detail
 
 
+def _tushare_token_source() -> str:
+    if os.environ.get("TUSHARE_TOKEN", "").strip():
+        return "env:TUSHARE_TOKEN"
+    try:
+        from instock.core.data.providers.tushare import TUSHARE_TOKEN_FILE
+
+        if TUSHARE_TOKEN_FILE.exists() and TUSHARE_TOKEN_FILE.read_text(
+            encoding="utf-8", errors="replace"
+        ).strip():
+            return "file:instock/config/tushare_token.txt"
+    except Exception:
+        pass
+    return ""
+
+
+def _tushare_detail() -> Dict[str, Any]:
+    detail: Dict[str, Any] = {
+        "provider_id": "tushare",
+        "token_configured": False,
+        "token_source": "",
+        "healthcheck": False,
+        "sample_ok": False,
+        "sample_rows": 0,
+        "sample_error": None,
+        "active_in_chain": False,
+        "capabilities": ["daily_bar_raw", "daily_bar"],
+        "hint": "Tushare 作为 raw 日线回退源使用；设置 TUSHARE_TOKEN 或 instock/config/tushare_token.txt 后重启容器",
+    }
+    try:
+        from instock.core.data.providers.tushare import Provider, read_tushare_token
+
+        token = read_tushare_token()
+        detail["token_configured"] = bool(token)
+        detail["token_source"] = _tushare_token_source()
+        prov = Provider()
+        detail["healthcheck"] = prov.healthcheck()
+        if not token:
+            detail["sample_error"] = "未配置 TUSHARE_TOKEN 或 instock/config/tushare_token.txt"
+        else:
+            res = prov.fetch_bars("600000", "20240101", "20240131", adjust="raw")
+            if res.ok and res.data is not None and not res.data.empty:
+                detail["sample_ok"] = True
+                detail["sample_rows"] = int(len(res.data))
+            else:
+                detail["sample_error"] = res.error or "样本 K 线为空"
+    except Exception as e:
+        detail["sample_error"] = str(e)
+
+    prof = effective_data_profile()
+    chain = _chain_steps("daily_bar_raw", prof)
+    detail["active_in_chain"] = any(
+        x.get("provider") == "tushare" and x.get("role") == "chain" for x in chain
+    )
+    return detail
+
+
 def build_report() -> Dict[str, Any]:
     profile = effective_data_profile()
     bar_mode = effective_bar_mode()
@@ -166,6 +222,7 @@ def build_report() -> Dict[str, Any]:
         "baostock",
         "mootdx_local",
         "mootdx_online",
+        "tushare",
         "tencent",
     ]
     providers = [_provider_status(pid) for pid in provider_ids]
@@ -206,6 +263,7 @@ def build_report() -> Dict[str, Any]:
         "registry_enabled_for_bars": use_reg or bar_mode == "raw",
         "mootdx_local": _mootdx_local_detail(),
         "mootdx_online": _mootdx_online_detail(),
+        "tushare": _tushare_detail(),
         "providers": providers,
         "domains": domains,
         "recent_bar_batches": bar_batches,
@@ -214,12 +272,15 @@ def build_report() -> Dict[str, Any]:
                 "INSTOCK_TDX_DIR=/tdx",
                 "INSTOCK_BAR_MODE=raw",
                 "INSTOCK_USE_DATA_REGISTRY=1",
+                "INSTOCK_BAR_DATA_SOURCE=auto  # 可设 tushare/mootdx/eastmoney",
                 "INSTOCK_DATA_PROFILE=backtest",
+                "TUSHARE_TOKEN=***",
             ],
             "docker_volume": "- /path/to/tdx:/tdx:ro",
             "verify_cli": [
                 "docker exec InStock python3 /data/InStock/scripts/verify_tdx_local.py --code 600000",
                 "docker exec InStock python3 /data/InStock/scripts/verify_mootdx_online.py",
+                "docker exec InStock python3 - <<'PY'\nfrom instock.core.data.providers.tushare import Provider\nr=Provider().fetch_bars('600000','20240101','20240131')\nprint(r.ok, 0 if r.data is None else len(r.data), r.error)\nPY",
             ],
             "doc": "docs/plan/data-domains.md",
         },
@@ -266,5 +327,21 @@ def verify_provider(provider_id: str, code: str = "600000") -> Dict[str, Any]:
             "error": res.error,
             "provider_id": provider_id,
             "code": code,
+        }
+    if provider_id == "tushare":
+        from instock.core.data.providers.tushare import Provider
+
+        prov = Provider()
+        hc = prov.healthcheck()
+        res = prov.fetch_bars(code, "20240101", "20240131", adjust="raw")
+        return {
+            "ok": hc and res.ok and res.data is not None and not res.data.empty,
+            "healthcheck": hc,
+            "rows": int(len(res.data)) if res.ok and res.data is not None else 0,
+            "error": res.error,
+            "provider_id": provider_id,
+            "code": code,
+            "token_configured": bool(hc),
+            "token_source": _tushare_token_source(),
         }
     return {"ok": False, "error": f"不支持 verify: {provider_id}"}

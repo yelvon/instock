@@ -34,6 +34,7 @@ interface RunRow {
   date_start?: string;
   date_end?: string;
   spot_data_source?: string;
+  bar_data_source?: string;
   trigger_source?: string;
   schedule_title?: string;
   schedule_id?: string;
@@ -71,6 +72,7 @@ const dateList = ref("");
 const dateStart = ref("");
 const dateEnd = ref("");
 const spotSource = ref("eastmoney");
+const barSource = ref("auto");
 const emPush2Host = ref("auto");
 const runMsg = ref("");
 const runs = ref<RunRow[]>([]);
@@ -172,6 +174,9 @@ function formatRunConditions(r: RunRow): string {
     };
     if (s && lab[s]) cond += ` · 快照：${lab[s]}`;
     else if (s) cond += ` · 快照：${s}`;
+  }
+  if (r.job_id === "mootdx_bars_sync_job" && r.bar_data_source) {
+    cond += ` · 日线源：${r.bar_data_source}`;
   }
   return prefix + cond;
 }
@@ -410,6 +415,9 @@ async function triggerRun() {
   };
   if (jobId.value === "basic_data_daily_job") {
     payload.spot_data_source = spotSource.value || "eastmoney";
+  }
+  if (jobId.value === "mootdx_bars_sync_job") {
+    payload.bar_data_source = barSource.value || "auto";
   }
   if (dm === "list") payload.date_list = dateList.value.trim();
   if (dm === "range") {
@@ -1088,6 +1096,17 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item label="说明">
           <el-text style="white-space: pre-wrap">{{ jobDesc() }}</el-text>
+        </el-form-item>
+        <el-form-item label="日线数据源">
+          <el-select v-model="barSource" style="width: 320px" :disabled="jobId !== 'mootdx_bars_sync_job'">
+            <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
+            <el-option label="仅 mootdx" value="mootdx" />
+            <el-option label="仅 Tushare" value="tushare" />
+            <el-option label="仅东财" value="eastmoney" />
+          </el-select>
+          <el-text v-if="jobId === 'mootdx_bars_sync_job'" size="small" type="info" style="margin-left: 8px">
+            选择 Tushare 时会强制走 Tushare provider。
+          </el-text>
         </el-form-item>
         <el-form-item label="日期参数">
           <el-radio-group

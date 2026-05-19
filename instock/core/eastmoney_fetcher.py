@@ -41,6 +41,10 @@ def _outer_retry_count() -> int:
         return 4
 
 
+def _env_enabled(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+
+
 class eastmoney_fetcher:
     """
     东方财富网数据获取器
@@ -79,6 +83,8 @@ class eastmoney_fetcher:
     def _create_session(self):
         """创建并配置会话"""
         session = requests.Session()
+        # 东财接口经常被本机/容器代理中断；默认不继承系统代理环境变量。
+        session.trust_env = _env_enabled("INSTOCK_HTTP_TRUST_ENV")
 
         # 连接层重试：502/断连时略拉长间隔，减轻「too many 502」与对端掐连接
         retry_strategy = Retry(
@@ -108,7 +114,7 @@ class eastmoney_fetcher:
             'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
         }
-        ck = self._get_cookie()
+        ck = self._get_cookie() if _env_enabled("INSTOCK_EM_USE_COOKIE") else ""
         if ck:
             # 必须写在 headers 里：cookies.update({'Cookie': ...}) 会变成名为 Cookie 的单条 cookie，服务端认不出来
             headers["Cookie"] = ck
@@ -121,11 +127,15 @@ class eastmoney_fetcher:
         """
         if timeout is None:
             timeout = (3, 10)
-        headers = dict(self.session.headers)
-        return requests.get(
+        probe_session = requests.Session()
+        probe_session.trust_env = self.session.trust_env
+        probe_session.headers.update(self.session.headers)
+        probe_adapter = HTTPAdapter(max_retries=Retry(total=0))
+        probe_session.mount("http://", probe_adapter)
+        probe_session.mount("https://", probe_adapter)
+        return probe_session.get(
             url,
             params=params,
-            headers=headers,
             proxies=self.proxies,
             timeout=timeout,
         )

@@ -27,7 +27,7 @@ def stock_zh_a_spot_em() -> pd.DataFrame:
     :rtype: pandas.DataFrame
     """
     push2 = Push2ClistRouter()
-    page_size = 50
+    page_size = 100
     page_current = 1
     params = {
         "pn": page_current,
@@ -198,7 +198,7 @@ def code_id_map_em() -> dict:
     :rtype: dict
     """
     push2 = Push2ClistRouter()
-    page_size = 50
+    page_size = 100
     page_current = 1
     params = {
         "pn": page_current,
@@ -226,7 +226,7 @@ def code_id_map_em() -> dict:
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r =  fetcher.make_request(url, params=params)
+        r = push2.make_request(fetcher, params=params)
         data_json = r.json()
         _data = data_json["data"]["diff"]
         data.extend(_data)
@@ -250,7 +250,7 @@ def code_id_map_em() -> dict:
         "fields": "f12",
         "_": "1623833739532",
     }
-    r =  fetcher.make_request(url, params=params)
+    r = push2.make_request(fetcher, params=params)
     data_json = r.json()
     data = data_json["data"]["diff"]
     if not data:
@@ -263,7 +263,7 @@ def code_id_map_em() -> dict:
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r =  fetcher.make_request(url, params=params)
+        r = push2.make_request(fetcher, params=params)
         data_json = r.json()
         _data = data_json["data"]["diff"]
         data.extend(_data)
@@ -286,7 +286,7 @@ def code_id_map_em() -> dict:
         "fields": "f12",
         "_": "1623833739532",
     }
-    r =  fetcher.make_request(url, params=params)
+    r = push2.make_request(fetcher, params=params)
     data_json = r.json()
     data = data_json["data"]["diff"]
     if not data:
@@ -299,7 +299,7 @@ def code_id_map_em() -> dict:
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r =  fetcher.make_request(url, params=params)
+        r = push2.make_request(fetcher, params=params)
         data_json = r.json()
         _data = data_json["data"]["diff"]
         data.extend(_data)
@@ -334,7 +334,6 @@ def stock_zh_a_hist(
     :return: 每日行情
     :rtype: pandas.DataFrame
     """
-    code_id_dict = code_id_map_em()
     adjust_dict = {"qfq": "1", "hfq": "2", "": "0"}
     period_dict = {"daily": "101", "weekly": "102", "monthly": "103"}
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"

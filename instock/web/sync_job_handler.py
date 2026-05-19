@@ -108,6 +108,7 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
                 date_end=body.get("date_end") or "",
                 date_list=body.get("date_list") or "",
                 spot_data_source=(body.get("spot_data_source") or ""),
+                bar_data_source=(body.get("bar_data_source") or ""),
             )
             self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
         except Exception as e:
@@ -397,6 +398,7 @@ class DataGovernanceEnvApiHandler(webBase.BaseHandler, ABC):
             tencent_enrich_enabled,
             tdx_dir,
         )
+        from instock.core.data.providers.tushare import read_tushare_token
 
         self.set_header("Content-Type", "application/json;charset=UTF-8")
         tdx = tdx_dir()
@@ -416,6 +418,7 @@ class DataGovernanceEnvApiHandler(webBase.BaseHandler, ABC):
                             "INSTOCK_SPOT_DATA_SOURCE", ""
                         ),
                         "tdx_configured": bool(tdx),
+                        "tushare_token_configured": bool(read_tushare_token()),
                     },
                     "hint": "修改需在 Docker Compose environment 或 .env 中配置后重启 InStock 容器",
                 },

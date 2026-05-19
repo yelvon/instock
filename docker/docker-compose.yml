@@ -41,6 +41,7 @@ services:
       db_password: ${DB_PASSWORD:-root}
       db_database: ${DB_DATABASE:-instockdb}
       db_port: ${DB_PORT:-3306}
+      TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
     volumes:
       - ${INSTOCK_PROXY_FILE:-${HOME}/instock-docker/instockproxy.txt}:/data/InStock/instock/config/proxy.txt
       - ${INSTOCK_COOKIE_FILE:-${HOME}/instock-docker/eastmoneycookie.txt}:/data/InStock/instock/config/eastmoney_cookie.txt

@@ -10,6 +10,10 @@ PROFILE_LIVE = "live"
 PROFILE_BACKTEST = "backtest"
 BAR_MODE_RAW = "raw"
 BAR_MODE_ADJUSTED = "adjusted"
+BAR_SOURCE_AUTO = "auto"
+BAR_SOURCE_MOOTDX = "mootdx"
+BAR_SOURCE_TUSHARE = "tushare"
+BAR_SOURCE_EASTMONEY = "eastmoney"
 
 
 def effective_data_profile(override: Optional[str] = None) -> str:
@@ -55,3 +59,23 @@ def bars_mootdx_only() -> bool:
         "yes",
         "on",
     )
+
+
+def normalize_bar_data_source(raw: Optional[str]) -> str:
+    s = str(raw or "").strip().lower()
+    if not s or s in ("auto", "registry", "chain", "default"):
+        return BAR_SOURCE_AUTO
+    if s in ("mootdx", "tdx", "通达信"):
+        return BAR_SOURCE_MOOTDX
+    if s in ("tushare", "ts"):
+        return BAR_SOURCE_TUSHARE
+    if s in ("eastmoney", "em", "东财"):
+        return BAR_SOURCE_EASTMONEY
+    return BAR_SOURCE_AUTO
+
+
+def effective_bar_data_source(override: Optional[str] = None) -> str:
+    raw = override if override is not None and str(override).strip() else os.environ.get(
+        "INSTOCK_BAR_DATA_SOURCE", BAR_SOURCE_AUTO
+    )
+    return normalize_bar_data_source(raw)

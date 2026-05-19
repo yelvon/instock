@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
@@ -16,7 +16,8 @@ import {
 } from "@/api/mootdxProbe";
 
 const router = useRouter();
-const activeTab = ref("manual");
+const route = useRoute();
+const activeTab = ref(String(route.query.tab || "manual"));
 
 interface JobItem {
   id: string;
@@ -38,6 +39,7 @@ interface RunRow {
   date_start?: string;
   date_end?: string;
   spot_data_source?: string;
+  bar_data_source?: string;
   trigger_source?: string;
   schedule_title?: string;
   schedule_id?: string;
@@ -94,6 +96,7 @@ const dateList = ref("");
 const dateStart = ref("");
 const dateEnd = ref("");
 const spotSource = ref("eastmoney");
+const barSource = ref("auto");
 const runMsg = ref("");
 
 const runs = ref<RunRow[]>([]);
@@ -172,6 +175,19 @@ interface MootdxDetail {
   hint?: string;
 }
 
+interface TushareDetail {
+  provider_id: string;
+  token_configured?: boolean;
+  token_source?: string;
+  healthcheck?: boolean;
+  sample_ok?: boolean;
+  sample_rows?: number;
+  sample_error?: string | null;
+  active_in_chain?: boolean;
+  capabilities?: string[];
+  hint?: string;
+}
+
 interface ProviderStatus {
   provider_id: string;
   import_ok: boolean;
@@ -190,6 +206,7 @@ const dsReport = ref<{
   registry_enabled_for_bars?: boolean;
   mootdx_local?: MootdxDetail;
   mootdx_online?: MootdxDetail;
+  tushare?: TushareDetail;
   providers?: ProviderStatus[];
   domains?: Record<
     string,
@@ -234,6 +251,9 @@ function formatRunConditions(r: RunRow): string {
   let cond = dm === "default" ? "默认" : dm === "list" ? `枚举：${r.date_list || ""}` : `区间：${r.date_start}~${r.date_end}`;
   if (r.job_id === "basic_data_daily_job" && r.spot_data_source) {
     cond += ` · 快照：${r.spot_data_source}`;
+  }
+  if (r.job_id === "mootdx_bars_sync_job" && r.bar_data_source) {
+    cond += ` · 日线源：${r.bar_data_source}`;
   }
   return prefix + cond;
 }
@@ -437,7 +457,9 @@ async function verifyProvider(providerId: string) {
     });
     const j = await r.json();
     if (j.ok && !j.async) {
-      verifyMsg.value = `${providerId}：样本 ${j.rows} 行，healthcheck=${j.healthcheck}`;
+      const tokenHint =
+        providerId === "tushare" && j.token_source ? `，token=${j.token_source}` : "";
+      verifyMsg.value = `${providerId}：样本 ${j.rows} 行，healthcheck=${j.healthcheck}${tokenHint}`;
       ElMessage.success(verifyMsg.value);
     } else {
       verifyMsg.value = j.error || "检测失败";
@@ -606,6 +628,9 @@ async function triggerRun() {
   if (jobId.value === "basic_data_daily_job") {
     payload.spot_data_source = spotSource.value;
   }
+  if (jobId.value === "mootdx_bars_sync_job") {
+    payload.bar_data_source = barSource.value;
+  }
   const r = await fetch("/instock/api/sync/trigger", {
     method: "POST",
     headers: { "Content-Type": "application/json;charset=UTF-8" },
@@ -725,6 +750,9 @@ function fmtJson(v: unknown): string {
 }
 
 watch(activeTab, (t) => {
+  if (route.query.tab !== t) {
+    void router.replace({ query: { ...route.query, tab: t } });
+  }
   if (t === "runs") void loadRuns();
   if (t === "lineage") {
     void loadBatches();
@@ -812,6 +840,17 @@ onUnmounted(() => {
                 <el-option label="Baostock" value="baostock" />
                 <el-option label="东财→宝上" value="auto" />
               </el-select>
+            </el-form-item>
+            <el-form-item label="日线源">
+              <el-select v-model="barSource" style="width: 280px" :disabled="jobId !== 'mootdx_bars_sync_job'">
+                <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
+                <el-option label="仅 mootdx" value="mootdx" />
+                <el-option label="仅 Tushare" value="tushare" />
+                <el-option label="仅东财" value="eastmoney" />
+              </el-select>
+              <el-text v-if="jobId === 'mootdx_bars_sync_job'" size="small" type="info" style="margin-left: 8px">
+                选择 Tushare 时需容器已安装 tushare 包并配置 token。
+              </el-text>
             </el-form-item>
             <el-form-item label="日期">
               <el-radio-group
@@ -1016,7 +1055,7 @@ onUnmounted(() => {
           </el-card>
 
           <el-row :gutter="16" class="mt" v-if="dsReport">
-            <el-col :span="12">
+            <el-col :span="8">
               <el-card shadow="never" class="src-card">
                 <template #header>
                   <div class="card-head">
@@ -1051,7 +1090,7 @@ onUnmounted(() => {
                 <el-text size="small" type="info">{{ dsReport.mootdx_local?.hint }}</el-text>
               </el-card>
             </el-col>
-            <el-col :span="12">
+            <el-col :span="8">
               <el-card shadow="never" class="src-card">
                 <template #header>
                   <div class="card-head">
@@ -1079,6 +1118,46 @@ onUnmounted(() => {
                     {{ dsReport.mootdx_online?.fallback_when }}
                   </el-descriptions-item>
                 </el-descriptions>
+              </el-card>
+            </el-col>
+            <el-col :span="8">
+              <el-card shadow="never" class="src-card">
+                <template #header>
+                  <div class="card-head">
+                    <span>Tushare（日线 fallback）</span>
+                    <el-button size="small" @click="verifyProvider('tushare')">
+                      验证 token
+                    </el-button>
+                  </div>
+                </template>
+                <el-descriptions :column="1" size="small" border>
+                  <el-descriptions-item label="Token">
+                    <el-tag :type="dsReport.tushare?.token_configured ? 'success' : 'danger'" size="small">
+                      {{ dsReport.tushare?.token_configured ? "已配置" : "未配置" }}
+                    </el-tag>
+                    <span class="muted mono">
+                      {{ dsReport.tushare?.token_source || "TUSHARE_TOKEN / token 文件" }}
+                    </span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="healthcheck">
+                    <el-tag :type="dsReport.tushare?.healthcheck ? 'success' : 'danger'" size="small">
+                      {{ dsReport.tushare?.healthcheck ? "通过" : "失败" }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="样本 K 线">
+                    {{
+                      dsReport.tushare?.sample_ok
+                        ? `${dsReport.tushare?.sample_rows} 行`
+                        : (dsReport.tushare?.sample_error || "—")
+                    }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="chain 中生效">
+                    <el-tag :type="dsReport.tushare?.active_in_chain ? 'success' : 'info'" size="small">
+                      {{ dsReport.tushare?.active_in_chain ? "是（raw 日线回退）" : "否" }}
+                    </el-tag>
+                  </el-descriptions-item>
+                </el-descriptions>
+                <el-text size="small" type="info">{{ dsReport.tushare?.hint }}</el-text>
               </el-card>
             </el-col>
           </el-row>

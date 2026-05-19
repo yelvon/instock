@@ -24,6 +24,11 @@ providers:
       - daily_bar_raw
       - daily_bar
       - daily_spot_snapshot_partial
+  tushare:
+    module: instock.core.data.providers.tushare
+    capabilities:
+      - daily_bar_raw
+      - daily_bar
   tencent:
     module: instock.core.data.providers.tencent
     capabilities:
@@ -62,6 +67,8 @@ domains:
             when: tdx_dir_set
           - provider: mootdx_online
             strict: true
+          - provider: tushare
+            strict: true
           - provider: eastmoney
             strict: true
       live:
@@ -69,6 +76,8 @@ domains:
           - provider: mootdx_local
             when: tdx_dir_set
           - provider: mootdx_online
+            strict: false
+          - provider: tushare
             strict: false
           - provider: eastmoney
             strict: false

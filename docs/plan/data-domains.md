@@ -8,13 +8,14 @@
 |-----------|-----------|--------|------------|
 | `trade_calendar` | `trade_calendar` | `cal_date` | DB 同步 job |
 | `daily_spot_snapshot` | `cn_stock_spot`, `cn_etf_spot` | `date`, `code` | 东财 |
-| `daily_bar_raw` | `cache/hist/*.pickle` | `code`, `date` | `mootdx_local`（有 TDX 目录） |
+| `daily_bar_raw` | `cache/hist/*.pickle` | `code`, `date` | `mootdx_local`（有 TDX 目录），否则按 Registry 链回退 |
 | `derived_indicators` | 指标/形态/策略表 | `date`, `code` | 本地计算，依赖上游 batch |
 
 ## chain 与 enrich
 
 - **chain**：决定整表/整行主数据来源；`backtest` profile 下 `strict: true` 失败即停止，不静默换源。
 - **enrich**：主链成功后补列；`tencent` 仅补 PE/PB/市值等空字段，不覆盖东财已有值。
+- `daily_bar_raw` 当前链路为：`mootdx_local` → `mootdx_online` → `tushare` → `eastmoney`。回测 profile 下任一 strict provider 返回失败时应终止，避免同一次回测静默混源。
 
 ## K 线：raw 与 qfq
 
@@ -30,6 +31,20 @@
 | `INSTOCK_BAR_MODE` | `raw`（默认） |
 | `INSTOCK_TENCENT_ENRICH` | live 默认开；backtest 建议 `0` |
 | `INSTOCK_USE_DATA_REGISTRY` | `1` 时 spot/K 线路径走 Registry |
+| `TUSHARE_TOKEN` | Tushare token；也可写入 `instock/config/tushare_token.txt` |
+
+## 回测前置数据契约
+
+回测模块启动前必须先调用前置检查，不能在撮合过程中静默跳过缺失数据。第一期必检：
+
+| 数据域 | 检查内容 | 缺失处理 |
+|--------|----------|----------|
+| `trade_calendar` | 区间内交易日完整 | 拒绝启动，建议跑 `sync_trade_calendar_job` |
+| `daily_bar_raw` | 股票池内标的日线覆盖回测区间 | 拒绝启动，建议跑 `mootdx_bars_sync_job` 或配置 Tushare/东财补数 |
+| `daily_spot_snapshot` | 策略或股票池过滤依赖的日期完整 | 拒绝启动，建议跑 `basic_data_daily_job` |
+| `derived_indicators` | 策略依赖指标时目标日期完整 | 拒绝启动，建议跑 `indicators_data_daily_job` |
+
+每次回测结果必须记录：`INSTOCK_DATA_PROFILE`、`INSTOCK_BAR_MODE`、provider、数据区间、`data_batch` 或等价版本、缺口检查摘要。若无法定位到 `data_batch`，也必须记录缓存文件路径和生成时间。
 
 ## TDX 离线目录
 
