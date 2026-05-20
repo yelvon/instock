@@ -21,6 +21,19 @@ sys.path.append(cpath)
 from instock.core.mootdx_universe import count_universe, load_universe_codes
 
 
+def _bar_source_label() -> str:
+    try:
+        from instock.core.data.profile import effective_bar_data_source
+
+        return effective_bar_data_source()
+    except Exception:
+        return os.environ.get("INSTOCK_BAR_DATA_SOURCE", "auto") or "auto"
+
+
+def _log_prefix() -> str:
+    return f"bars_sync[{_bar_source_label()}]"
+
+
 def _sync_one(code: str, date_from: str, date_to: str) -> tuple[str, bool, str]:
     try:
         import instock.core.stockfetch as stf
@@ -30,7 +43,7 @@ def _sync_one(code: str, date_from: str, date_to: str) -> tuple[str, bool, str]:
         df = stf.stock_hist_cache(code, ds, de, is_cache=True, adjust="")
         if df is not None and not df.empty:
             return code, True, f"rows={len(df)}"
-        return code, False, "empty"
+        return code, False, f"empty provider={_bar_source_label()}"
     except Exception as e:
         return code, False, str(e)[:120]
 
@@ -67,13 +80,21 @@ def main():
             "[FAIL] cn_stock_universe 为空，请先执行 sync_stock_universe_job"
         )
     codes = load_universe_codes(args.limit if args.limit > 0 else None)
+    src = _bar_source_label()
     logging.info(
-        "mootdx_bars_sync: 证券主表 %s 条，本次处理 %s 只，区间 %s ~ %s",
+        "%s 开始: 日线源=%s 证券主表 %s 条，本次 %s 只，区间 %s ~ %s",
+        _log_prefix(),
+        src,
         n_uni,
         len(codes),
         args.from_date,
         args.to_date or "最新",
     )
+    if src == "tushare":
+        logging.info(
+            "%s 提示: 日志前缀 bars_sync 为作业名，非 mootdx；空数据多为 Tushare 无该代码/区间行情或限频",
+            _log_prefix(),
+        )
 
     ok_n = 0
     fail_n = 0
@@ -88,7 +109,8 @@ def main():
                 ok_n += 1
             else:
                 fail_n += 1
-                logging.warning("mootdx_bars_sync %s FAIL %s", code, msg)
+                if fail_n <= 5 or fail_n % 100 == 0:
+                    logging.warning("%s %s FAIL %s", _log_prefix(), code, msg)
             if args.sleep > 0:
                 time.sleep(args.sleep)
             if i % 50 == 0 or i == len(codes):
@@ -102,7 +124,8 @@ def main():
                 )
 
     logging.info(
-        "mootdx_bars_sync_job 完成: ok=%s fail=%s total=%s",
+        "%s 完成: ok=%s fail=%s total=%s",
+        _log_prefix(),
         ok_n,
         fail_n,
         len(codes),

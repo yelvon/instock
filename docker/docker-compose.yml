@@ -1,6 +1,6 @@
 # InStock + MariaDB：一键编排
 #
-# 快速开始（与 docs/deployment.md §3.2 一致）：
+# 快速开始（与 docs/部署说明.md §3.2 一致）：
 #   mkdir -p ~/instock-docker/mariadb/data
 #   touch ~/instock-docker/instockproxy.txt ~/instock-docker/eastmoneycookie.txt
 #   cd 本目录 && docker compose up -d
@@ -8,7 +8,7 @@
 # 可选：cp .env.example .env ，用绝对路径覆盖默认的 ~/instock-docker
 #
 # 说明：MariaDB 数据目录必须为 /var/lib/mysql；勿再挂到 /var/lib/instockdb，否则数据会进匿名卷。
-# 网络名 InStockService、容器名与 deployment.md 中 docker run 示例一致。
+# 网络名 InStockService、容器名与 部署说明.md 中 docker run 示例一致。
 # 该网络声明为 external，避免与历史上「docker network create」创建的无 Compose 标签的同名网桥冲突。
 # 若本机尚无此网络，请先执行：docker network create InStockService
 

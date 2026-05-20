@@ -1,6 +1,6 @@
 # 回测 API 契约（二期，与 Vue 前端对接）
 
-详细需求见 [`plan/backtest-requirements.md`](plan/backtest-requirements.md)，前端设计见 [`plan/backtest-frontend-design.md`](plan/backtest-frontend-design.md)。前端技术栈：Vue 3、AG Grid（订单/成交/持仓/账户快照表）、lightweight-charts 或 ECharts（权益/回撤曲线）、TanStack Query（列表缓存与任务轮询）。
+详细需求见 [`plan/回测需求.md`](plan/回测需求.md)，前端设计见 [`plan/回测前端设计.md`](plan/回测前端设计.md)。前端技术栈：Vue 3、AG Grid（订单/成交/持仓/账户快照表）、lightweight-charts 或 ECharts（权益/回撤曲线）、TanStack Query（列表缓存与任务轮询）。
 
 ## 1. 创建回测任务
 

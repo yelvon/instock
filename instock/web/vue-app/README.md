@@ -42,4 +42,4 @@ npm run build
 - 新增 JSON：`/instock/api/table_meta`、`/instock/api/kline_bundle`
 - 仍使用：`/instock/api_data`、`/instock/control/attention`、各 `/instock/api/sync/*`
 
-回测二期契约见仓库根 `docs/backtest-api-contract.md`。
+回测二期契约见仓库根 `docs/回测-api契约.md`。

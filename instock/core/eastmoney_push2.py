@@ -152,8 +152,25 @@ def probe_push2_clist(
     }
 
 
+def hosts_for_clist_requests(preference: Optional[str] = None) -> List[str]:
+    """
+    实际请求顺序：auto 为 82→88→80；固定节点时优先该节点，失败后仍尝试其余节点（避免偏好 82 时整批作业失败）。
+    """
+    pref = normalize_push2_host(preference) if preference is not None else read_push2_host_preference()
+    primary = resolve_host_sequence(pref)
+    if pref == "auto":
+        return primary
+    seen: set[str] = set()
+    out: List[str] = []
+    for h in primary + list(AUTO_HOST_ORDER):
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out
+
+
 class Push2ClistRouter:
-    """按偏好选择 push2 节点；auto 模式下失败则依次尝试其它节点，成功后分页复用同一节点。"""
+    """按偏好选择 push2 节点；失败后依次尝试其它节点，成功后分页复用同一节点。"""
 
     def __init__(self, preference: Optional[str] = None) -> None:
         self.preference = (
@@ -171,7 +188,7 @@ class Push2ClistRouter:
                 clist_get_url(self._active_host), params=params, **kwargs
             )
         last_exc: Optional[Exception] = None
-        for host in resolve_host_sequence(self.preference):
+        for host in hosts_for_clist_requests(self.preference):
             try:
                 hop_kw = dict(kwargs)
                 hop_kw.setdefault("retry", 1)
@@ -180,7 +197,14 @@ class Push2ClistRouter:
                     clist_get_url(host), params=params, **hop_kw
                 )
                 self._active_host = host
-                _log.info("eastmoney push2: 使用节点 %s.push2.eastmoney.com", host)
+                if self.preference != "auto" and host != self.preference:
+                    _log.warning(
+                        "eastmoney push2: 偏好节点 %s 不可用，已改用 %s.push2.eastmoney.com",
+                        self.preference,
+                        host,
+                    )
+                else:
+                    _log.info("eastmoney push2: 使用节点 %s.push2.eastmoney.com", host)
                 return r
             except Exception as e:
                 last_exc = e

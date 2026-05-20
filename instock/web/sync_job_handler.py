@@ -335,12 +335,23 @@ class SyncPrefsApiHandler(webBase.BaseHandler, ABC):
 
     def get(self):
         import instock.web.sync_preferences as prefs
+        import instock.web.sync_presets as presets
 
         self.set_header("Content-Type", "application/json;charset=UTF-8")
-        self.write(json.dumps({"ok": True, "prefs": prefs.read_prefs()}, ensure_ascii=False))
+        self.write(
+            json.dumps(
+                {
+                    "ok": True,
+                    "prefs": prefs.read_prefs(),
+                    "presets": presets.list_presets(),
+                },
+                ensure_ascii=False,
+            )
+        )
 
     def post(self):
         import instock.web.sync_preferences as prefs
+        import instock.web.sync_presets as presets
 
         self.set_header("Content-Type", "application/json;charset=UTF-8")
         try:
@@ -350,8 +361,31 @@ class SyncPrefsApiHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
             return
         try:
-            out = prefs.write_prefs(body)
+            preset_id = str(body.get("apply_preset") or "").strip()
+            if preset_id:
+                mode = str(body.get("scheduler_mode") or "keep").strip().lower()
+                if mode not in ("keep", "merge", "replace"):
+                    mode = "keep"
+                result = presets.apply_preset(preset_id, scheduler_mode=mode)  # type: ignore
+                self.write(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "prefs": result["prefs"],
+                            "preset_id": result["preset_id"],
+                            "scheduler": result.get("scheduler"),
+                            "scheduler_mode": result.get("scheduler_mode"),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                return
+            updates = {k: v for k, v in body.items() if k != "apply_preset" and k != "scheduler_mode"}
+            out = prefs.write_prefs(updates)
             self.write(json.dumps({"ok": True, "prefs": out}, ensure_ascii=False))
+        except ValueError as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         except Exception as e:
             self.set_status(500)
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))

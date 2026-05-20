@@ -23,8 +23,10 @@ def _ensure_dir() -> None:
 
 def _defaults() -> Dict[str, Any]:
     return {
-        "default_spot_data_source": "eastmoney",
+        "default_spot_data_source": "auto",
+        "default_bar_data_source": "tushare",
         "eastmoney_push2_host": "auto",
+        "active_preset_id": "",
     }
 
 
@@ -47,6 +49,12 @@ def _read_file_unlocked() -> Dict[str, Any]:
         out["eastmoney_push2_host"] = normalize_push2_host(
             str(out.get("eastmoney_push2_host") or "auto")
         )
+        from instock.core.data.profile import normalize_bar_data_source
+
+        out["default_bar_data_source"] = normalize_bar_data_source(
+            str(out.get("default_bar_data_source") or "auto")
+        )
+        out["active_preset_id"] = str(out.get("active_preset_id") or "").strip()
         return out
     except Exception:
         return _defaults()
@@ -72,6 +80,14 @@ def write_prefs(updates: Dict[str, Any]) -> Dict[str, Any]:
             cur["eastmoney_push2_host"] = normalize_push2_host(
                 str(updates.get("eastmoney_push2_host") or "auto")
             )
+        if "default_bar_data_source" in updates:
+            from instock.core.data.profile import normalize_bar_data_source
+
+            cur["default_bar_data_source"] = normalize_bar_data_source(
+                str(updates.get("default_bar_data_source") or "auto")
+            )
+        if "active_preset_id" in updates:
+            cur["active_preset_id"] = str(updates.get("active_preset_id") or "").strip()
         _ensure_dir()
         with open(_PREFS_PATH, "w", encoding="utf-8") as f:
             json.dump(cur, f, ensure_ascii=False, indent=2)

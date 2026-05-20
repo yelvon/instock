@@ -79,3 +79,10 @@ def effective_bar_data_source(override: Optional[str] = None) -> str:
         "INSTOCK_BAR_DATA_SOURCE", BAR_SOURCE_AUTO
     )
     return normalize_bar_data_source(raw)
+
+
+def allow_eastmoney_hist_fallback() -> bool:
+    """仅「自动链路」允许 stock_hist_cache 在 Registry 失败后直连东财 K 线。"""
+    if bars_mootdx_only():
+        return False
+    return effective_bar_data_source() == BAR_SOURCE_AUTO

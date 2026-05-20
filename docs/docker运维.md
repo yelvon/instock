@@ -1,6 +1,6 @@
 # InStock Docker 运维常用命令
 
-与 [部署说明（deployment.md）](./deployment.md) 第 3 节配合使用。**部署命令速查**：[deploy-cheatsheet.md](./deploy-cheatsheet.md)。股市有风险，本系统仅供学习与研究。
+与 [部署说明（部署说明.md）](./部署说明.md) 第 3 节配合使用。**部署命令速查**：[部署命令速查.md](./部署命令速查.md)。股市有风险，本系统仅供学习与研究。
 
 **Compose 文件位置**：仓库内 `docker/docker-compose.yml`（同目录有 `.env.example` 与 `docker-compose.dev.yml`）。
 
@@ -75,7 +75,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 | 进库、用客户端 | `docker exec -it InStockDbService mariadb -uroot -proot` |
 | 在应用容器里测 HTTP | `docker exec InStock python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9988/').status)"` |
 
-密码与 **`MYSQL_ROOT_PASSWORD`** / **`deployment.md`** 一致；若改过 root 密码请替换 `-proot`。
+密码与 **`MYSQL_ROOT_PASSWORD`** / **`部署说明.md`** 一致；若改过 root 密码请替换 `-proot`。
 
 ---
 
@@ -153,4 +153,4 @@ Compose 使用网络名 **`InStockService`**；应用通过 **`db_host=InStockDb
 | 应用连不上库 | `docker network inspect InStockService`；确认 **`db_host=InStockDbService`** 与容器名一致 |
 | DataGrip 只有系统库 | 确认端口映射、账号密码；执行 **`SHOW DATABASES;`**；首次需 **`init_job`** 等初始化 |
 
-更多部署细节见 **[deployment.md](./deployment.md)**。
+更多部署细节见 **[部署说明.md](./部署说明.md)**。

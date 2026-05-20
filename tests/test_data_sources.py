@@ -310,6 +310,33 @@ class BarDataSourceSelectionTests(unittest.TestCase):
         self.assertEqual(env["INSTOCK_BAR_MODE"], "raw")
         self.assertNotIn("INSTOCK_BARS_MOOTDX_ONLY", env)
 
+    def test_hosts_for_clist_requests_fixed_host_still_tries_fallbacks(self):
+        from instock.core.eastmoney_push2 import hosts_for_clist_requests
+
+        with patch.dict(os.environ, {"INSTOCK_EM_PUSH2_HOST": "82"}, clear=False):
+            hosts = hosts_for_clist_requests("82")
+        self.assertEqual(hosts[0], "82")
+        self.assertIn("88", hosts)
+        self.assertIn("80", hosts)
+
+    def test_allow_eastmoney_hist_fallback_respects_bar_source(self):
+        from instock.core.data.profile import allow_eastmoney_hist_fallback
+
+        with patch.dict(os.environ, {"INSTOCK_BAR_DATA_SOURCE": "tushare"}, clear=False):
+            self.assertFalse(allow_eastmoney_hist_fallback())
+        with patch.dict(
+            os.environ,
+            {"INSTOCK_BAR_DATA_SOURCE": "auto", "INSTOCK_BARS_MOOTDX_ONLY": "1"},
+            clear=False,
+        ):
+            self.assertFalse(allow_eastmoney_hist_fallback())
+        with patch.dict(
+            os.environ,
+            {"INSTOCK_BAR_DATA_SOURCE": "auto", "INSTOCK_BARS_MOOTDX_ONLY": ""},
+            clear=False,
+        ):
+            self.assertTrue(allow_eastmoney_hist_fallback())
+
 
 if __name__ == "__main__":
     unittest.main()

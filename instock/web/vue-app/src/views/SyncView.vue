@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
 import {
   cancelEastmoneyProbe,
@@ -51,6 +51,13 @@ interface RunRow {
   post_verify?: { still_missing?: string[]; ok_dates?: string[] } | null;
 }
 
+interface PresetItem {
+  id: string;
+  title: string;
+  summary: string;
+  scheduler_template_count?: number;
+}
+
 interface ScheduleRow {
   id: string;
   title: string;
@@ -63,6 +70,7 @@ interface ScheduleRow {
   weekdays: number[];
   times: string[];
   spot_data_source: string;
+  bar_data_source?: string;
 }
 
 const jobs = ref<JobItem[]>([]);
@@ -75,6 +83,16 @@ const spotSource = ref("eastmoney");
 const barSource = ref("auto");
 const emPush2Host = ref("auto");
 const runMsg = ref("");
+
+const KLINE_BAR_JOB = "mootdx_bars_sync_job";
+const SPOT_EASTMONEY_JOBS = new Set([
+  "basic_data_daily_job",
+  "execute_daily_job",
+  "selection_data_daily_job",
+  "basic_data_other_daily_job",
+  "basic_data_after_close_daily_job",
+]);
+const usesEastmoneySpotJob = computed(() => SPOT_EASTMONEY_JOBS.has(jobId.value));
 const runs = ref<RunRow[]>([]);
 const selectedRunIds = ref<string[]>([]);
 const runsTableRef = ref<{ clearSelection?: () => void } | null>(null);
@@ -97,6 +115,10 @@ const showErrBox = ref(false);
 const lastFinishedRun = ref<RunRow | null>(null);
 
 const prefsMsg = ref("");
+const presetList = ref<PresetItem[]>([]);
+const activePresetId = ref("");
+const defaultBarSource = ref("tushare");
+const presetApplying = ref(false);
 
 const dhFrom = ref("");
 const dhTo = ref("");
@@ -128,7 +150,8 @@ const schedDraft = ref<ScheduleRow[]>([]);
 const schedMsg = ref("");
 const schTitle = ref("");
 const schTimes = ref("");
-const schSpot = ref("eastmoney");
+const schSpot = ref("auto");
+const schBar = ref("tushare");
 const schJobId = ref("basic_data_daily_job");
 const schWeekdays = ref<number[]>([0, 1, 2, 3, 4]);
 const wdOptions = [
@@ -207,17 +230,23 @@ async function loadJobs() {
   }
 }
 
+function applyPrefsToForm(prefs: Record<string, string>) {
+  if (prefs.default_spot_data_source) spotSource.value = prefs.default_spot_data_source;
+  if (prefs.default_bar_data_source) {
+    defaultBarSource.value = prefs.default_bar_data_source;
+    barSource.value = prefs.default_bar_data_source;
+  }
+  if (prefs.eastmoney_push2_host) emPush2Host.value = prefs.eastmoney_push2_host;
+  activePresetId.value = prefs.active_preset_id || "";
+}
+
 async function loadPrefs() {
   try {
     const r = await fetch("/instock/api/sync/prefs");
     const j = await r.json();
     if (j.ok && j.prefs) {
-      if (j.prefs.default_spot_data_source) {
-        spotSource.value = j.prefs.default_spot_data_source;
-      }
-      if (j.prefs.eastmoney_push2_host) {
-        emPush2Host.value = j.prefs.eastmoney_push2_host;
-      }
+      applyPrefsToForm(j.prefs);
+      presetList.value = Array.isArray(j.presets) ? j.presets : [];
       prefsMsg.value = "已从服务器加载同步偏好";
     }
   } catch {
@@ -235,11 +264,14 @@ function savePrefsDebounced() {
         headers: { "Content-Type": "application/json;charset=UTF-8" },
         body: JSON.stringify({
           default_spot_data_source: spotSource.value,
+          default_bar_data_source: defaultBarSource.value,
           eastmoney_push2_host: emPush2Host.value,
+          active_preset_id: "",
         }),
       });
       const j = await r.json();
-      prefsMsg.value = j.ok ? "偏好已保存" : j.error || "保存失败";
+      if (j.ok && j.prefs) applyPrefsToForm(j.prefs);
+      prefsMsg.value = j.ok ? "偏好已保存（已清除一键预设标记，可继续细调）" : j.error || "保存失败";
     } catch {
       prefsMsg.value = "保存失败";
     }
@@ -248,6 +280,61 @@ function savePrefsDebounced() {
 
 watch(spotSource, savePrefsDebounced);
 watch(emPush2Host, savePrefsDebounced);
+watch(defaultBarSource, () => {
+  barSource.value = defaultBarSource.value;
+  savePrefsDebounced();
+});
+
+async function applyDataPreset(
+  presetId: string,
+  schedulerMode: "keep" | "merge" | "replace" = "merge"
+) {
+  if (schedulerMode === "replace") {
+    try {
+      await ElMessageBox.confirm(
+        "将用该预设的推荐模板覆盖当前全部定时任务，已有项会被清空后重写。",
+        "替换全部定时",
+        { type: "warning", confirmButtonText: "确认替换", cancelButtonText: "取消" }
+      );
+    } catch {
+      return;
+    }
+  }
+
+  presetApplying.value = true;
+  prefsMsg.value = "正在应用预设…";
+  try {
+    const r = await fetch("/instock/api/sync/prefs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify({ apply_preset: presetId, scheduler_mode: schedulerMode }),
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      prefsMsg.value = j.error || "应用失败";
+      ElMessage.error(prefsMsg.value);
+      return;
+    }
+    if (j.prefs) applyPrefsToForm(j.prefs);
+    activePresetId.value = j.preset_id || presetId;
+    if (schedulerMode !== "keep" && j.scheduler?.schedules) {
+      schedDraft.value = JSON.parse(JSON.stringify(j.scheduler.schedules));
+      schedGlobal.value = j.scheduler.enabled_globally !== false;
+      await saveScheduler();
+      schedMsg.value =
+        schedulerMode === "replace" ? "已应用预设并替换全部定时任务" : "已应用预设并合并推荐定时任务";
+    } else {
+      schedMsg.value = "已应用预设（未改定时任务）";
+    }
+    prefsMsg.value = `已应用：${presetList.value.find((p) => p.id === presetId)?.title || presetId}`;
+    ElMessage.success(prefsMsg.value);
+  } catch {
+    prefsMsg.value = "应用失败";
+    ElMessage.error("应用失败");
+  } finally {
+    presetApplying.value = false;
+  }
+}
 
 async function loadRuns() {
   const r = await fetch("/instock/api/sync/runs?limit=80");
@@ -398,6 +485,17 @@ async function cancelRun() {
 
 async function triggerRun() {
   runMsg.value = "";
+  if (usesEastmoneySpotJob.value) {
+    try {
+      await ElMessageBox.confirm(
+        "「仅 Tushare」只用于「遍历拉 K 线」的历史日线。当前作业会走东财快照（push2 clist）或「快照源」，不会用 Tushare。",
+        "当前作业不使用 Tushare",
+        { type: "warning", confirmButtonText: "仍要执行", cancelButtonText: "取消" }
+      );
+    } catch {
+      return;
+    }
+  }
   let dm = dateMode.value;
   if (
     jobId.value === "init_job" ||
@@ -855,6 +953,7 @@ function addSched() {
     weekdays: wd,
     times: lines,
     spot_data_source: schSpot.value,
+    bar_data_source: schBar.value,
   });
   schTitle.value = "";
   schTimes.value = "";
@@ -904,7 +1003,34 @@ onUnmounted(() => {
     <div class="sync-page">
     <el-card shadow="never" class="block">
       <template #header>
-        <span>同步与快照偏好</span>
+        <span>一键默认设置</span>
+      </template>
+      <el-text type="info" size="small" style="display: block; margin-bottom: 10px">
+        点选后写入服务器偏好（并可选更新定时任务草稿）；下方各项仍可单独修改并自动保存。
+        <template v-if="activePresetId"> 当前预设：{{ activePresetId }} </template>
+      </el-text>
+      <div v-for="p in presetList" :key="p.id" class="preset-row">
+        <div class="preset-row-head">
+          <el-text tag="b">{{ p.title }}</el-text>
+          <el-text size="small" type="info">{{ p.summary }}</el-text>
+        </div>
+        <el-space wrap>
+          <el-button type="primary" :loading="presetApplying" @click="applyDataPreset(p.id, 'merge')">
+            应用偏好 + 合并推荐定时
+          </el-button>
+          <el-button :loading="presetApplying" @click="applyDataPreset(p.id, 'keep')">
+            仅应用默认偏好
+          </el-button>
+          <el-button type="danger" plain :loading="presetApplying" @click="applyDataPreset(p.id, 'replace')">
+            替换全部定时
+          </el-button>
+        </el-space>
+      </div>
+    </el-card>
+
+    <el-card shadow="never" class="block">
+      <template #header>
+        <span>同步与快照偏好（可细调）</span>
       </template>
       <el-form label-width="160px">
         <el-form-item label="默认快照数据源">
@@ -913,6 +1039,17 @@ onUnmounted(() => {
             <el-option label="Baostock（宝上）" value="baostock" />
             <el-option label="东财优先，失败或空则 Baostock" value="auto" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="默认 K 线日线源">
+          <el-select v-model="defaultBarSource" style="width: 320px">
+            <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
+            <el-option label="仅 mootdx" value="mootdx" />
+            <el-option label="仅 Tushare" value="tushare" />
+            <el-option label="仅东财" value="eastmoney" />
+          </el-select>
+          <el-text size="small" type="info" style="display: block; margin-top: 6px">
+            手动作业「遍历拉 K 线」与定时 K 线任务默认使用；仅 Tushare 时不会回退东财 K 线。
+          </el-text>
         </el-form-item>
         <el-form-item label="东财 push2 节点">
           <el-select v-model="emPush2Host" style="width: 320px">
@@ -955,7 +1092,12 @@ onUnmounted(() => {
         <el-table-column prop="times" label="时刻" min-width="140">
           <template #default="{ row }">{{ (row.times || []).join(", ") }}</template>
         </el-table-column>
-        <el-table-column prop="spot_data_source" label="快照源" width="100" />
+        <el-table-column prop="spot_data_source" label="快照源" width="88" />
+        <el-table-column label="K线源" width="72">
+          <template #default="{ row }">
+            {{ row.job_id === "mootdx_bars_sync_job" ? row.bar_data_source || "auto" : "—" }}
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="80" align="center">
           <template #default="{ $index }">
             <el-button type="danger" link @click="removeSched($index)">删除</el-button>
@@ -968,10 +1110,20 @@ onUnmounted(() => {
         <el-select v-model="schJobId" style="width: 200px" placeholder="作业">
           <el-option v-for="j in jobs" :key="j.id" :label="j.title" :value="j.id" />
         </el-select>
-        <el-select v-model="schSpot" style="width: 160px">
+        <el-select v-model="schSpot" style="width: 140px" placeholder="快照源">
           <el-option label="东财" value="eastmoney" />
           <el-option label="宝上" value="baostock" />
           <el-option label="东财→宝上" value="auto" />
+        </el-select>
+        <el-select
+          v-show="schJobId === 'mootdx_bars_sync_job'"
+          v-model="schBar"
+          style="width: 130px"
+          placeholder="K线源"
+        >
+          <el-option label="仅 Tushare" value="tushare" />
+          <el-option label="自动" value="auto" />
+          <el-option label="仅 mootdx" value="mootdx" />
         </el-select>
         <el-button @click="addSched">加入列表</el-button>
         <el-button type="primary" @click="saveScheduler">保存全部定时配置</el-button>
@@ -1097,15 +1249,27 @@ onUnmounted(() => {
         <el-form-item label="说明">
           <el-text style="white-space: pre-wrap">{{ jobDesc() }}</el-text>
         </el-form-item>
-        <el-form-item label="日线数据源">
-          <el-select v-model="barSource" style="width: 320px" :disabled="jobId !== 'mootdx_bars_sync_job'">
+        <el-alert
+          v-if="usesEastmoneySpotJob"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="mb"
+          title="「仅 Tushare」不适用于当前作业"
+        >
+          <template #default>
+            Tushare 仅支持「遍历拉 K 线」；快照/日作业请用「默认快照数据源」或作业内「快照源」（东财/Baostock）。
+          </template>
+        </el-alert>
+        <el-form-item v-if="jobId === KLINE_BAR_JOB" label="K 线日线源">
+          <el-select v-model="barSource" style="width: 320px">
             <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
             <el-option label="仅 mootdx" value="mootdx" />
             <el-option label="仅 Tushare" value="tushare" />
             <el-option label="仅东财" value="eastmoney" />
           </el-select>
-          <el-text v-if="jobId === 'mootdx_bars_sync_job'" size="small" type="info" style="margin-left: 8px">
-            选择 Tushare 时会强制走 Tushare provider。
+          <el-text size="small" type="info" style="display: block; margin-top: 6px">
+            仅「遍历拉 K 线」作业生效；失败不回退东财 K 线。
           </el-text>
         </el-form-item>
         <el-form-item label="日期参数">
@@ -1311,6 +1475,21 @@ onUnmounted(() => {
 }
 .block {
   border-radius: 10px;
+}
+.preset-row {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.preset-row:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.preset-row-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 .card-head {
   display: flex;

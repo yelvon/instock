@@ -110,7 +110,7 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "script": "basic_data_other_daily_job.py",
         "title": "其它基础数据",
         "hint": "龙虎榜、资金流、涨停原因等",
-        "description": "一批扩展基础数据：龙虎榜统计、分红配送、个股/行业/概念资金流、早盘抢筹、涨停原因等（详见 jobs.md）。建议先有当日快照 cn_stock_spot 再跑，耗时可较长。",
+        "description": "一批扩展基础数据：龙虎榜统计、分红配送、个股/行业/概念资金流、早盘抢筹、涨停原因等（详见 作业说明.md）。建议先有当日快照 cn_stock_spot 再跑，耗时可较长。",
     },
     {
         "id": "basic_data_after_close_daily_job",
@@ -544,9 +544,15 @@ def _worker(run_id: str) -> None:
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env["PYTHONUNBUFFERED"] = "1"
     if run.get("job_id") == "basic_data_daily_job":
-        from instock.core.spot_source import normalize_spot_source
+        from instock.core.spot_source import (
+            SPOT_SOURCE_AUTO,
+            normalize_spot_source,
+        )
 
-        env["INSTOCK_SPOT_DATA_SOURCE"] = normalize_spot_source(run.get("spot_data_source") or "")
+        spot = normalize_spot_source(run.get("spot_data_source") or "")
+        env["INSTOCK_SPOT_DATA_SOURCE"] = spot
+        if spot == SPOT_SOURCE_AUTO:
+            env["INSTOCK_USE_DATA_REGISTRY"] = "1"
         env.setdefault("INSTOCK_QUALITY_STRICT", "1")
         env.setdefault("INSTOCK_MAX_CONSECUTIVE_FETCH_FAIL", "5")
     elif run.get("job_id") == "mootdx_bars_sync_job":

@@ -113,9 +113,14 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             times_clean.append(f"{hh:02d}:{mm:02d}")
         if not times_clean:
             raise ValueError("未解析到有效时刻")
+        from instock.core.data.profile import normalize_bar_data_source
         from instock.core.spot_source import normalize_spot_source
+        from instock.web.sync_preferences import read_prefs
 
         spot = normalize_spot_source(str(sch.get("spot_data_source") or "eastmoney"))
+        bar = normalize_bar_data_source(
+            str(sch.get("bar_data_source") or read_prefs().get("default_bar_data_source") or "auto")
+        )
         cleaned.append(
             {
                 "id": sid,
@@ -129,6 +134,7 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 "weekdays": sorted(set(wd_clean)),
                 "times": sorted(set(times_clean)),
                 "spot_data_source": spot,
+                "bar_data_source": bar,
             }
         )
     out = {
@@ -181,6 +187,7 @@ def tick() -> None:
                 date_end=str(sch.get("date_end") or ""),
                 date_list=str(sch.get("date_list") or ""),
                 spot_data_source=str(sch.get("spot_data_source") or "eastmoney"),
+                bar_data_source=str(sch.get("bar_data_source") or ""),
                 trigger_source="scheduler",
                 schedule_id=sid,
                 schedule_title=str(sch.get("title") or ""),

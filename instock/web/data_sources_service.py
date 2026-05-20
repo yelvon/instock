@@ -177,7 +177,7 @@ def _tushare_detail() -> Dict[str, Any]:
         "sample_error": None,
         "active_in_chain": False,
         "capabilities": ["daily_bar_raw", "daily_bar"],
-        "hint": "Tushare 作为 raw 日线回退源使用；设置 TUSHARE_TOKEN 或 instock/config/tushare_token.txt 后重启容器",
+        "hint": "仅历史日线 K 线（daily_bar_raw）；不含全市场快照/选股；设置 token 后重启容器",
     }
     try:
         from instock.core.data.providers.tushare import Provider, read_tushare_token
@@ -282,7 +282,7 @@ def build_report() -> Dict[str, Any]:
                 "docker exec InStock python3 /data/InStock/scripts/verify_mootdx_online.py",
                 "docker exec InStock python3 - <<'PY'\nfrom instock.core.data.providers.tushare import Provider\nr=Provider().fetch_bars('600000','20240101','20240131')\nprint(r.ok, 0 if r.data is None else len(r.data), r.error)\nPY",
             ],
-            "doc": "docs/plan/data-domains.md",
+            "doc": "docs/plan/数据域.md",
         },
     }
 

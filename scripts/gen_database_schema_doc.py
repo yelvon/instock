@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""从 instock.core.tablestructure 生成 docs/database-schema.md。
+"""从 instock.core.tablestructure 生成 docs/数据库表结构.md。
 
 新增或修改业务表时：
 1. 更新 instock/core/tablestructure.py
@@ -146,7 +146,7 @@ def _emit_md(path: str) -> None:
 
 
 def main():
-    out = os.path.join(_REPO, "docs", "database-schema.md")
+    out = os.path.join(_REPO, "docs", "数据库表结构.md")
     _emit_md(out)
     print("Wrote", out)
 

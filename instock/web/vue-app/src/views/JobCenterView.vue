@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
 import {
   cancelEastmoneyProbe,
@@ -98,6 +98,18 @@ const dateEnd = ref("");
 const spotSource = ref("eastmoney");
 const barSource = ref("auto");
 const runMsg = ref("");
+
+const KLINE_BAR_JOB = "mootdx_bars_sync_job";
+/** 会拉东财 push2 快照/列表等，与「仅 Tushare」无关 */
+const SPOT_EASTMONEY_JOBS = new Set([
+  "basic_data_daily_job",
+  "execute_daily_job",
+  "selection_data_daily_job",
+  "basic_data_other_daily_job",
+  "basic_data_after_close_daily_job",
+]);
+
+const usesEastmoneySpotJob = computed(() => SPOT_EASTMONEY_JOBS.has(jobId.value));
 
 const runs = ref<RunRow[]>([]);
 const selectedRunIds = ref<string[]>([]);
@@ -284,8 +296,9 @@ async function loadJobs() {
 async function loadPrefs() {
   const r = await fetch("/instock/api/sync/prefs");
   const j = await r.json();
-  if (j.ok && j.prefs?.default_spot_data_source) {
-    spotSource.value = j.prefs.default_spot_data_source;
+  if (j.ok && j.prefs) {
+    if (j.prefs.default_spot_data_source) spotSource.value = j.prefs.default_spot_data_source;
+    if (j.prefs.default_bar_data_source) barSource.value = j.prefs.default_bar_data_source;
   }
 }
 
@@ -610,6 +623,20 @@ async function showDetail(id: string) {
 }
 
 async function triggerRun() {
+  if (usesEastmoneySpotJob.value) {
+    try {
+      await ElMessageBox.confirm(
+        "「仅 Tushare」只作用于作业「遍历拉 K 线（日线）」，用于历史 K 线缓存。\n\n" +
+          "当前作业会拉全市场快照/选股等，走东财 push2（clist）或你选的「快照源」，不会使用 Tushare。\n\n" +
+          "若只要 Tushare K 线：请改选「遍历拉 K 线」+ 日线源「仅 Tushare」。\n" +
+          "若只要补快照且东财不通：请将「快照源」改为 Baostock 或「东财→宝上」。",
+        "当前作业不使用 Tushare",
+        { type: "warning", confirmButtonText: "仍要执行", cancelButtonText: "取消" }
+      );
+    } catch {
+      return;
+    }
+  }
   let dm = dateMode.value;
   if (
     jobId.value === "init_job" ||
@@ -840,16 +867,37 @@ onUnmounted(() => {
                 <el-option label="Baostock" value="baostock" />
                 <el-option label="东财→宝上" value="auto" />
               </el-select>
+              <el-text
+                v-if="jobId === 'basic_data_daily_job'"
+                size="small"
+                type="warning"
+                style="display: block; margin-top: 6px; max-width: 520px"
+              >
+                股票/ETF 快照走东财 push2（clist），与下方「日线源」无关。东财连不上时请选 Baostock 或「东财→宝上」。
+              </el-text>
             </el-form-item>
-            <el-form-item label="日线源">
-              <el-select v-model="barSource" style="width: 280px" :disabled="jobId !== 'mootdx_bars_sync_job'">
+            <el-alert
+              v-if="usesEastmoneySpotJob"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="mb"
+              title="当前作业不会使用「仅 Tushare」"
+            >
+              <template #default>
+                Tushare 在本项目中<strong>只支持历史日线 K 线</strong>（作业「遍历拉 K 线」）。快照、选股、整体日作业等仍走东财或
+                Baostock，请在上方「快照源」选择；日志里出现 push2 clist 属于正常现象。
+              </template>
+            </el-alert>
+            <el-form-item v-if="jobId === KLINE_BAR_JOB" label="K 线日线源">
+              <el-select v-model="barSource" style="width: 280px">
                 <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
                 <el-option label="仅 mootdx" value="mootdx" />
                 <el-option label="仅 Tushare" value="tushare" />
                 <el-option label="仅东财" value="eastmoney" />
               </el-select>
-              <el-text v-if="jobId === 'mootdx_bars_sync_job'" size="small" type="info" style="margin-left: 8px">
-                选择 Tushare 时需容器已安装 tushare 包并配置 token。
+              <el-text size="small" type="info" style="display: block; margin-top: 6px; max-width: 520px">
+                仅本作业生效。选「仅 Tushare」时需已安装 tushare 并配置 token；失败不会回退东财 K 线。
               </el-text>
             </el-form-item>
             <el-form-item label="日期">
@@ -1157,7 +1205,9 @@ onUnmounted(() => {
                     </el-tag>
                   </el-descriptions-item>
                 </el-descriptions>
-                <el-text size="small" type="info">{{ dsReport.tushare?.hint }}</el-text>
+                <el-text size="small" type="info">
+                  {{ dsReport.tushare?.hint }}；不含全市场快照（快照请用东财/Baostock）。
+                </el-text>
               </el-card>
             </el-col>
           </el-row>

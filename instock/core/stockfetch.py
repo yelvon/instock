@@ -506,6 +506,7 @@ def stock_hist_cache(code, date_start, date_end=None, is_cache=True, adjust=''):
             provider_used = "eastmoney"
             use_reg = _use_data_registry() or os.environ.get("INSTOCK_BAR_MODE", "raw").strip().lower() == "raw"
             if use_reg and (not adjust or adjust in ("", "raw")):
+                res = None
                 try:
                     from instock.core.data.registry import get_registry
                     from instock.core.data.lineage import record_batch
@@ -536,10 +537,23 @@ def stock_hist_cache(code, date_start, date_end=None, is_cache=True, adjust=''):
                                 pass
                 except Exception as e:
                     logging.warning("stock_hist_cache registry: %s", e)
+                else:
+                    if stock is None and res is not None and not res.ok:
+                        logging.debug(
+                            "stock_hist_cache %s: %s — %s",
+                            code,
+                            res.provider_id or "registry",
+                            res.error or "无数据",
+                        )
             if stock is None:
-                from instock.core.data.profile import bars_mootdx_only
+                from instock.core.data.profile import allow_eastmoney_hist_fallback
 
-                if bars_mootdx_only():
+                if not allow_eastmoney_hist_fallback():
+                    logging.info(
+                        "stock_hist_cache %s: Registry 无数据，已禁用东财回退（日线源=%s）",
+                        code,
+                        os.environ.get("INSTOCK_BAR_DATA_SOURCE", "auto"),
+                    )
                     return None
                 em_adj = adjust if adjust else ("qfq" if not use_reg else "")
                 if date_end is not None:
