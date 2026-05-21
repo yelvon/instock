@@ -100,6 +100,15 @@ const barSource = ref("auto");
 const runMsg = ref("");
 
 const KLINE_BAR_JOB = "mootdx_bars_sync_job";
+const CANONICAL_BAR_JOBS = new Set([
+  "sync_bars_mootdx_job",
+  "sync_bars_tushare_job",
+  "sync_bars_akshare_job",
+  "sync_bars_eastmoney_job",
+]);
+const isKlineBarJob = computed(
+  () => jobId.value === KLINE_BAR_JOB || CANONICAL_BAR_JOBS.has(jobId.value)
+);
 /** 会拉东财 push2 快照/列表等，与「仅 Tushare」无关 */
 const SPOT_EASTMONEY_JOBS = new Set([
   "basic_data_daily_job",
@@ -655,7 +664,7 @@ async function triggerRun() {
   if (jobId.value === "basic_data_daily_job") {
     payload.spot_data_source = spotSource.value;
   }
-  if (jobId.value === "mootdx_bars_sync_job") {
+  if (jobId.value === KLINE_BAR_JOB) {
     payload.bar_data_source = barSource.value;
   }
   const r = await fetch("/instock/api/sync/trigger", {
@@ -889,12 +898,13 @@ onUnmounted(() => {
                 Baostock，请在上方「快照源」选择；日志里出现 push2 clist 属于正常现象。
               </template>
             </el-alert>
-            <el-form-item v-if="jobId === KLINE_BAR_JOB" label="K 线日线源">
+            <el-form-item v-if="jobId === KLINE_BAR_JOB && !CANONICAL_BAR_JOBS.has(jobId)" label="K 线日线源">
               <el-select v-model="barSource" style="width: 280px">
                 <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
                 <el-option label="仅 mootdx" value="mootdx" />
                 <el-option label="仅 Tushare" value="tushare" />
                 <el-option label="仅东财" value="eastmoney" />
+                <el-option label="仅 Akshare" value="akshare" />
               </el-select>
               <el-text size="small" type="info" style="display: block; margin-top: 6px; max-width: 520px">
                 仅本作业生效。选「仅 Tushare」时需已安装 tushare 并配置 token；失败不会回退东财 K 线。
@@ -910,13 +920,13 @@ onUnmounted(() => {
                 "
               >
                 <el-radio-button label="default">默认</el-radio-button>
-                <el-radio-button label="list" :disabled="jobId === 'mootdx_bars_sync_job'">
+                <el-radio-button label="list" :disabled="isKlineBarJob">
                   枚举
                 </el-radio-button>
                 <el-radio-button label="range">区间</el-radio-button>
               </el-radio-group>
               <el-text
-                v-if="jobId === 'mootdx_bars_sync_job'"
+                v-if="isKlineBarJob"
                 size="small"
                 type="info"
                 style="display: block; margin-top: 6px"
@@ -1210,7 +1220,79 @@ onUnmounted(() => {
                 </el-text>
               </el-card>
             </el-col>
+            <el-col :span="12">
+              <el-card shadow="never" class="inner">
+                <template #header>
+                  <span>Akshare（标准库 / Registry）</span>
+                  <el-button
+                    type="primary"
+                    link
+                    size="small"
+                    class="fr"
+                    :loading="verifyLoading === 'akshare'"
+                    @click="verifyProvider('akshare')"
+                  >
+                    检测
+                  </el-button>
+                </template>
+                <el-descriptions :column="1" size="small" border>
+                  <el-descriptions-item label="healthcheck">
+                    <el-tag :type="dsReport.akshare?.healthcheck ? 'success' : 'danger'" size="small">
+                      {{ dsReport.akshare?.healthcheck ? "通过" : "失败" }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="样本 K 线">
+                    {{
+                      dsReport.akshare?.sample_ok
+                        ? `${dsReport.akshare?.sample_rows} 行`
+                        : (dsReport.akshare?.sample_error || "—")
+                    }}
+                  </el-descriptions-item>
+                </el-descriptions>
+                <el-text size="small" type="info">{{ dsReport.akshare?.hint }}</el-text>
+              </el-card>
+            </el-col>
           </el-row>
+
+          <el-card v-if="dsReport?.canonical" shadow="never" class="mt inner">
+            <template #header>标准行情库 cn_stock_daily_bar</template>
+            <el-descriptions :column="3" size="small" border>
+              <el-descriptions-item label="状态">
+                <el-tag :type="dsReport.canonical.ready ? 'success' : 'info'" size="small">
+                  {{ dsReport.canonical.ready ? "已就绪" : "未建表/无数据" }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="总行数">
+                {{ dsReport.canonical.total_bars ?? 0 }}
+              </el-descriptions-item>
+              <el-descriptions-item label="证券数">
+                {{ dsReport.canonical.codes ?? 0 }}
+              </el-descriptions-item>
+              <el-descriptions-item label="完整">
+                {{ dsReport.canonical.complete ?? 0 }}
+              </el-descriptions-item>
+              <el-descriptions-item label="部分">
+                {{ dsReport.canonical.partial ?? 0 }}
+              </el-descriptions-item>
+              <el-descriptions-item label="冲突 suspect">
+                {{ dsReport.canonical.suspect ?? 0 }}
+              </el-descriptions-item>
+            </el-descriptions>
+            <el-text size="small" type="info" class="mt">
+              回测默认读标准表（INSTOCK_BACKTEST_USE_CANONICAL=1）。按源补数请用作业：标准库补数（mootdx/Tushare/Akshare/东财）。
+            </el-text>
+            <el-table
+              v-if="dsReport.canonical.by_primary_source?.length"
+              :data="dsReport.canonical.by_primary_source"
+              size="small"
+              stripe
+              border
+              class="mt"
+            >
+              <el-table-column prop="primary_source" label="主来源" />
+              <el-table-column prop="c" label="行数" width="100" />
+            </el-table>
+          </el-card>
 
           <el-card v-if="dsReport" shadow="never" class="mt inner">
             <template #header>

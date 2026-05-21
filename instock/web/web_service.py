@@ -74,6 +74,7 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/eastmoney_probe", syncJobHandler.EastmoneyProbeApiHandler),
             (r"/instock/api/sync/mootdx_probe", syncJobHandler.MootdxProbeApiHandler),
             (r"/instock/api/sync/data_sources", syncJobHandler.DataSourcesApiHandler),
+            (r"/instock/api/sync/canonical", syncJobHandler.CanonicalGovernanceApiHandler),
             (r"/instock/api/nav", navApiHandler.NavApiHandler),
             (r"/instock/api/table_meta", tableMetaHandler.TableMetaHandler),
             (r"/instock/api/kline_bundle", tableMetaHandler.KlineBundleApiHandler),

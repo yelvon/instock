@@ -203,18 +203,27 @@ async function runPrecheck() {
   }
 }
 
+const CANONICAL_BAR_JOB: Record<string, string> = {
+  auto: "sync_bars_mootdx_job",
+  mootdx: "sync_bars_mootdx_job",
+  tushare: "sync_bars_tushare_job",
+  akshare: "sync_bars_akshare_job",
+  eastmoney: "sync_bars_eastmoney_job",
+};
+
 async function triggerKlineSync() {
   syncSubmitting.value = true;
+  const src = form.value.barDataSource || "tushare";
+  const canonJob = CANONICAL_BAR_JOB[src] || "sync_bars_tushare_job";
   try {
     const r = await fetch("/instock/api/sync/trigger", {
       method: "POST",
       headers: { "Content-Type": "application/json;charset=UTF-8" },
       body: JSON.stringify({
-        job_id: "mootdx_bars_sync_job",
+        job_id: canonJob,
         date_mode: "range",
         date_start: form.value.dateFrom,
         date_end: form.value.dateTo,
-        bar_data_source: form.value.barDataSource,
       }),
     });
     const j = await r.json();
@@ -364,11 +373,12 @@ void loadRuns();
           <el-form-item>
             <el-checkbox v-model="form.requirePrerequisites">严格检查本地数据完整性</el-checkbox>
           </el-form-item>
-          <el-form-item label="补数日线源">
+          <el-form-item label="补数数据源">
             <el-select v-model="form.barDataSource" size="small">
-              <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
-              <el-option label="仅 mootdx" value="mootdx" />
-              <el-option label="仅 Tushare" value="tushare" />
+              <el-option label="mootdx（标准库作业）" value="mootdx" />
+              <el-option label="Tushare（标准库作业）" value="tushare" />
+              <el-option label="Akshare（标准库作业）" value="akshare" />
+              <el-option label="东财（标准库作业）" value="eastmoney" />
               <el-option label="仅东财" value="eastmoney" />
             </el-select>
           </el-form-item>

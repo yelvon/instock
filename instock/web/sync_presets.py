@@ -32,9 +32,8 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
                 "times": ["17:30"],
             },
             {
-                "title": "工作日-遍历K线(Tushare)",
-                "job_id": "mootdx_bars_sync_job",
-                "bar_data_source": "tushare",
+                "title": "工作日-标准库补数(Tushare)",
+                "job_id": "sync_bars_tushare_job",
                 "weekdays": [0, 1, 2, 3, 4],
                 "times": ["22:30"],
             },
@@ -83,9 +82,8 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
                 "times": ["17:30"],
             },
             {
-                "title": "工作日-遍历K线(Tushare)",
-                "job_id": "mootdx_bars_sync_job",
-                "bar_data_source": "tushare",
+                "title": "工作日-标准库补数(Tushare)",
+                "job_id": "sync_bars_tushare_job",
                 "weekdays": [0, 1, 2, 3, 4],
                 "times": ["22:30"],
             },

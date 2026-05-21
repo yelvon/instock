@@ -14,6 +14,7 @@ BAR_SOURCE_AUTO = "auto"
 BAR_SOURCE_MOOTDX = "mootdx"
 BAR_SOURCE_TUSHARE = "tushare"
 BAR_SOURCE_EASTMONEY = "eastmoney"
+BAR_SOURCE_AKSHARE = "akshare"
 
 
 def effective_data_profile(override: Optional[str] = None) -> str:
@@ -71,6 +72,8 @@ def normalize_bar_data_source(raw: Optional[str]) -> str:
         return BAR_SOURCE_TUSHARE
     if s in ("eastmoney", "em", "东财"):
         return BAR_SOURCE_EASTMONEY
+    if s in ("akshare", "ak"):
+        return BAR_SOURCE_AKSHARE
     return BAR_SOURCE_AUTO
 
 

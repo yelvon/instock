@@ -87,9 +87,41 @@ JOB_ITEMS: List[Dict[str, str]] = [
     {
         "id": "mootdx_bars_sync_job",
         "script": "mootdx_bars_sync_job.py",
-        "title": "遍历拉 K 线（日线）",
-        "hint": "依赖证券主表 + Registry，可选 mootdx/Tushare/东财",
-        "description": "按 cn_stock_universe 逐只拉日线写入 cache/hist（走 daily_bar_raw Registry）。需先同步证券主表。\n· 默认：从约 3 年前至今（与指标作业一致）。\n· 区间：填开始日（结束日可选）。\n· 日线源可选自动链路、仅 mootdx、仅 Tushare、仅东财。\n命令行另支持 --limit --workers。",
+        "title": "遍历拉 K 线（日线·旧缓存）",
+        "hint": "cache/hist；过渡用，标准库请用下方按源补数",
+        "description": "按 cn_stock_universe 逐只拉日线写入 cache/hist（走 daily_bar_raw Registry）。回测已优先读标准表 cn_stock_daily_bar。\n· 默认：从约 3 年前至今。\n· 日线源可选自动链路、仅 mootdx、仅 Tushare、仅东财。",
+    },
+    {
+        "id": "sync_bars_mootdx_job",
+        "script": "sync_bars_source_job.py",
+        "title": "标准库补数（mootdx）",
+        "hint": "写入 cn_stock_daily_bar",
+        "canonical_source": "mootdx",
+        "description": "仅 mootdx（local→online）独立补标准日线表，幂等合并，不覆盖完整行。需先同步证券主表。",
+    },
+    {
+        "id": "sync_bars_tushare_job",
+        "script": "sync_bars_source_job.py",
+        "title": "标准库补数（Tushare）",
+        "hint": "写入 cn_stock_daily_bar",
+        "canonical_source": "tushare",
+        "description": "仅 Tushare 独立补标准日线表。需配置 TUSHARE_TOKEN。",
+    },
+    {
+        "id": "sync_bars_akshare_job",
+        "script": "sync_bars_source_job.py",
+        "title": "标准库补数（Akshare）",
+        "hint": "写入 cn_stock_daily_bar",
+        "canonical_source": "akshare",
+        "description": "仅 Akshare 独立补标准日线表（volume 手→股）。需 pip install akshare。",
+    },
+    {
+        "id": "sync_bars_eastmoney_job",
+        "script": "sync_bars_source_job.py",
+        "title": "标准库补数（东财）",
+        "hint": "写入 cn_stock_daily_bar",
+        "canonical_source": "eastmoney",
+        "description": "仅东财 K 线独立补标准日线表。",
     },
     {
         "id": "basic_data_daily_job",
@@ -486,7 +518,7 @@ def _mootdx_bars_cli_args(
         if de:
             args.extend(["--to-date", de])
         return args
-    raise ValueError("mootdx 遍历拉 K 线请使用「默认」或「区间」日期模式")
+    raise ValueError("K 线补数作业请使用「默认」或「区间」日期模式")
 
 
 def _bar_data_source_env(bar_data_source: str) -> Dict[str, str]:
@@ -512,6 +544,13 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
         raise FileNotFoundError(f"找不到脚本: {script_path}")
     cmd = [sys.executable, script_path]
     if job_id in ("init_job", "sync_trade_calendar_job", "sync_stock_universe_job"):
+        return cmd
+    canon_src = (job.get("canonical_source") or "").strip()
+    if canon_src:
+        cmd.extend(["--source", canon_src])
+        cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
+        if canon_src == "akshare":
+            cmd.extend(["--workers", "2", "--sleep", "0.35"])
         return cmd
     if job_id == "mootdx_bars_sync_job":
         cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
@@ -557,6 +596,8 @@ def _worker(run_id: str) -> None:
         env.setdefault("INSTOCK_MAX_CONSECUTIVE_FETCH_FAIL", "5")
     elif run.get("job_id") == "mootdx_bars_sync_job":
         env.update(_bar_data_source_env(run.get("bar_data_source") or "auto"))
+    elif (run.get("job_id") or "").startswith("sync_bars_"):
+        env["INSTOCK_USE_DATA_REGISTRY"] = "0"
         try:
             from instock.core.sync_preferences import read_prefs
 
@@ -590,10 +631,10 @@ def _worker(run_id: str) -> None:
             with _LOCK:
                 if _RUNS.get(run_id, {}).get("status") == "cancelled":
                     break
-            chunk = proc.stdout.read(8192)
-            if not chunk:
+            line = proc.stdout.readline()
+            if not line:
                 break
-            merged_out += chunk
+            merged_out += line
             if len(merged_out) > 8_000_000:
                 merged_out = merged_out[-6_000_000:]
             now = time.time()
@@ -611,7 +652,7 @@ def _worker(run_id: str) -> None:
                     r["progress_hint"] = prog_hint
                     r["progress_current"] = prog_cur
                     r["progress_total"] = prog_tot
-            if now - last_persist > 2.0:
+            if now - last_persist > 0.5:
                 last_persist = now
                 _persist()
         code = proc.wait()

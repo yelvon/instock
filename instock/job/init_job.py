@@ -93,6 +93,12 @@ def main():
         ensure_cn_stock_universe_table()
     except Exception as e:
         logging.error(f"init_job: cn_stock_universe 建表异常：{e}")
+    try:
+        from instock.core.canonical.writer import ensure_canonical_tables
+
+        ensure_canonical_tables()
+    except Exception as e:
+        logging.error(f"init_job: canonical daily bar 建表异常：{e}")
     # 执行数据初始化。
 
 

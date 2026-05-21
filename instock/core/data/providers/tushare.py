@@ -46,6 +46,10 @@ def _yyyymmdd(value: Optional[str], default: str = "") -> str:
     return str(value).replace("-", "")
 
 
+def normalize_tushare_bars(df: pd.DataFrame) -> pd.DataFrame:
+    return _normalize_daily(df)
+
+
 def _normalize_daily(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["date"] = pd.to_datetime(out["trade_date"], format="%Y%m%d", errors="coerce").dt.strftime(

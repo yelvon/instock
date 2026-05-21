@@ -101,19 +101,33 @@ def _sample_bars(date_from: str, date_to: str) -> pd.DataFrame:
 
 def _load_bars(code: str, date_from: str, date_to: str, allow_sample: bool) -> pd.DataFrame:
     try:
-        import instock.core.stockfetch as stf
+        from instock.core.canonical.reader import canonical_read_enabled, load_canonical_bars
 
-        df = stf.stock_hist_cache(
-            code,
-            date_from.replace("-", ""),
-            date_end=date_to.replace("-", ""),
-            is_cache=True,
-            adjust="",
-        )
-        if df is not None and not df.empty:
-            return df
+        if canonical_read_enabled():
+            df = load_canonical_bars(code, date_from, date_to, adjust_type="raw")
+            if df is not None and not df.empty:
+                return df
     except Exception:
         pass
+    if os.environ.get("INSTOCK_BACKTEST_ALLOW_LEGACY_CACHE", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    ):
+        try:
+            import instock.core.stockfetch as stf
+
+            df = stf.stock_hist_cache(
+                code,
+                date_from.replace("-", ""),
+                date_end=date_to.replace("-", ""),
+                is_cache=True,
+                adjust="",
+            )
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            pass
     if allow_sample:
         return _sample_bars(date_from, date_to)
     raise ValueError(f"{code} 缺少 {date_from} ~ {date_to} 日线数据")

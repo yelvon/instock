@@ -577,6 +577,25 @@ class EastmoneyProbeApiHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": "无法取消（可能已结束）"}, ensure_ascii=False))
 
 
+class CanonicalGovernanceApiHandler(webBase.BaseHandler, ABC):
+    """标准行情库覆盖率、冲突与来源贡献。"""
+
+    def get(self):
+        import instock.web.canonical_governance_service as cgs
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        code = (self.get_argument("code", "") or "").strip()
+        try:
+            if code:
+                out = cgs.get_code_coverage(code)
+            else:
+                out = cgs.get_canonical_summary()
+            self.write(json.dumps({"ok": True, **out}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
 class DataSourcesApiHandler(webBase.BaseHandler, ABC):
     """GET 多源 Registry 状态；POST body {provider_id, code?} 触发连通性检测。"""
 

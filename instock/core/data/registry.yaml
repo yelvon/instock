@@ -29,6 +29,11 @@ providers:
     capabilities:
       - daily_bar_raw
       - daily_bar
+  akshare:
+    module: instock.core.data.providers.akshare
+    capabilities:
+      - daily_bar_raw
+      - daily_bar
   tencent:
     module: instock.core.data.providers.tencent
     capabilities:
@@ -69,6 +74,8 @@ domains:
             strict: true
           - provider: tushare
             strict: true
+          - provider: akshare
+            strict: true
           - provider: eastmoney
             strict: true
       live:
@@ -78,6 +85,7 @@ domains:
           - provider: mootdx_online
             strict: false
           - provider: tushare
+          - provider: akshare
             strict: false
           - provider: eastmoney
             strict: false

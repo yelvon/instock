@@ -295,6 +295,44 @@ TABLE_CN_STOCK_FOREIGN_KEY = {'name': 'cn_stock_foreign_key', 'cn': '股票外�
                                           'code': {'type': VARCHAR(6, _COLLATE), 'cn': '代码', 'size': 60},
                                           'name': {'type': VARCHAR(20, _COLLATE), 'cn': '名称', 'size': 70}}}
 
+TABLE_CN_STOCK_DAILY_BAR = {
+    'name': 'cn_stock_daily_bar',
+    'cn': '标准A股日线行情',
+    'columns': {
+        'date': {'type': DATE, 'cn': '交易日'},
+        'code': {'type': VARCHAR(6, _COLLATE), 'cn': '代码', 'size': 60},
+        'adjust_type': {'type': VARCHAR(16, _COLLATE), 'cn': '复权口径', 'size': 40},
+        'open': {'type': FLOAT, 'cn': '开盘'},
+        'close': {'type': FLOAT, 'cn': '收盘'},
+        'high': {'type': FLOAT, 'cn': '最高'},
+        'low': {'type': FLOAT, 'cn': '最低'},
+        'volume': {'type': FLOAT, 'cn': '成交量(股)'},
+        'amount': {'type': FLOAT, 'cn': '成交额'},
+        'amplitude': {'type': FLOAT, 'cn': '振幅'},
+        'quote_change': {'type': FLOAT, 'cn': '涨跌幅'},
+        'ups_downs': {'type': FLOAT, 'cn': '涨跌额'},
+        'turnover': {'type': FLOAT, 'cn': '换手率'},
+        'quality_status': {'type': VARCHAR(16, _COLLATE), 'cn': '质量状态', 'size': 40},
+        'completeness_score': {'type': BIGINT, 'cn': '完整度'},
+        'primary_source': {'type': VARCHAR(32, _COLLATE), 'cn': '主来源', 'size': 50},
+        'last_batch_id': {'type': VARCHAR(64, _COLLATE), 'cn': '批次', 'size': 80},
+    },
+}
+
+TABLE_MARKET_DATA_CONTRIBUTION = {
+    'name': 'market_data_contribution',
+    'cn': '行情来源贡献',
+    'columns': {
+        'date': {'type': DATE, 'cn': '交易日'},
+        'code': {'type': VARCHAR(6, _COLLATE), 'cn': '代码', 'size': 60},
+        'adjust_type': {'type': VARCHAR(16, _COLLATE), 'cn': '复权口径', 'size': 40},
+        'source_provider': {'type': VARCHAR(32, _COLLATE), 'cn': '来源', 'size': 50},
+        'batch_id': {'type': VARCHAR(64, _COLLATE), 'cn': '批次', 'size': 80},
+        'merge_action': {'type': VARCHAR(16, _COLLATE), 'cn': '合并动作', 'size': 40},
+        'quality_score': {'type': BIGINT, 'cn': '质量分'},
+    },
+}
+
 TABLE_CN_STOCK_UNIVERSE = {
     'name': 'cn_stock_universe',
     'cn': 'A股证券主表',

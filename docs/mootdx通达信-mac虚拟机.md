@@ -1,12 +1,14 @@
-# Mac + 虚拟机通达信：mootdx 读取本地日线方案
+# Mac + 通达信本地数据：mootdx 读取日线方案
 
-本文说明在 **macOS** 上运行 InStock 时，如何通过 **虚拟机内的通达信（Windows）** 产生的本地数据，让 **mootdx** 以 `mootdx_local` 方式读取日线，并接入本项目的 Registry / 作业流水线。
+本文说明在 **macOS** 上运行 InStock 时，如何让 **mootdx** 以 `mootdx_local` 方式读取通达信本地的 `vipdoc` 日线（`.day` 文件），并接入 Registry / 作业流水线。
 
-**使用 Parallels Desktop 的用户**：直接看 **§5 Parallels Desktop** 与 **§12 Parallels 快速备忘**。
+**使用 Parallels + Windows 通达信**：看 **§5 Parallels Desktop** 与 **§12 快速备忘**。
+
+**使用 Mac 本机安装的通达信**：看 **§2.1 Mac 版通达信能否直接读本地数据**。
 
 **文档导航**：[文档索引.md](./文档索引.md)
 
-> 说明：通达信客户端仅支持 Windows，Mac 上需在虚拟机中安装；InStock 与 mootdx 跑在 **Mac 本机或 Docker** 即可，不必在虚拟机里再装一套 Python。
+> InStock / mootdx 跑在 **Mac 本机或 Docker** 即可，**不需要**在通达信里再装 Python；只要磁盘上有标准 `vipdoc` 目录结构。
 
 ---
 
@@ -61,9 +63,43 @@ Windows 上常见安装根路径（供在虚拟机内查找）：
 
 在资源管理器地址栏复制该路径，确认其下存在 `vipdoc\sh\lday\*.day`。
 
+### 2.1 Mac 版通达信能否直接读本地数据？
+
+**可以**，但读的不是「通达信 App 正在打开的文件」，而是 **mootdx（Python）直接解析磁盘上的 `.day` 二进制文件**。与你在 Mac 还是 Windows 上安装通达信无关，关键是目录是否符合上一节的结构。
+
+| 问题 | 说明 |
+|------|------|
+| Mac 版能不能被 InStock「调用」？ | **不能也不需要**。通达信只负责下载/更新数据；InStock 用 `INSTOCK_TDX_DIR` 指向安装根目录即可。 |
+| Mac 版数据路径是否一样？ | 多数完整版与 Windows 相同，根目录下应有 **`vipdoc/sh/lday`、`vipdoc/sz/lday`**。具体以软件内 **系统设置 → 盘后数据下载 / 数据目录** 显示为准。 |
+| 常见 Mac 路径示例 | 可能在 `~/Documents/...`、`/Applications/通达信.../` 旁的数据目录等，**以你本机设置为准**，不要照搬 Windows 的 `C:\new_tdx`。 |
+| 若 Mac 版只有行情、不落盘 `.day` | 无法走 `mootdx_local`，只能用 **mootdx 在线**、**Tushare** 或 **虚拟机 Windows 通达信 + 共享目录**（§5）。 |
+
+**自检（Mac 终端）**：
+
+```bash
+# 把 /你的/通达信根目录 换成软件设置里看到的「安装目录」或「数据目录」的上一级
+export INSTOCK_TDX_DIR=/你的/通达信根目录
+ls "$INSTOCK_TDX_DIR/vipdoc/sh/lday" | head
+ls "$INSTOCK_TDX_DIR/vipdoc/sz/lday" | head
+
+cd /path/to/instock   # 仓库根
+python3 scripts/verify_tdx_local.py --tdx-dir "$INSTOCK_TDX_DIR" --code 600000
+```
+
+输出 `OK: provider=mootdx_local rows=...` 即表示 **Mac 本地通达信数据可被 mootdx 读取**。
+
+**Docker InStock** 需把该目录只读挂进容器，例如：
+
+```yaml
+volumes:
+  - /你的/通达信根目录:/tdx:ro
+environment:
+  INSTOCK_TDX_DIR: /tdx
+```
+
 ---
 
-## 3. 总体架构（Mac + 虚拟机）
+## 3. 总体架构（Mac + 本地 vipdoc）
 
 ```mermaid
 flowchart LR

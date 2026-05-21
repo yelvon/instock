@@ -29,6 +29,65 @@ TENCENT_SPOT_MAP = {
 }
 
 
+AKSHARE_BAR_MAP = {
+    "日期": "date",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+    "振幅": "amplitude",
+    "涨跌幅": "quote_change",
+    "涨跌额": "ups_downs",
+    "换手率": "turnover",
+}
+
+
+def _ensure_hist_columns(df: pd.DataFrame, volume_hands_to_shares: bool) -> pd.DataFrame:
+    hist_cols = list(
+        __import__("instock.core.tablestructure", fromlist=["CN_STOCK_HIST_DATA"]).CN_STOCK_HIST_DATA[
+            "columns"
+        ].keys()
+    )
+    for c in hist_cols:
+        if c not in df.columns:
+            df[c] = None
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    if volume_hands_to_shares and "volume" in df.columns:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce") * 100
+    keep = [c for c in hist_cols if c in df.columns]
+    return df[keep]
+
+
+def normalize_akshare_bars(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    rename = {k: v for k, v in AKSHARE_BAR_MAP.items() if k in out.columns}
+    out = out.rename(columns=rename)
+    return _ensure_hist_columns(out, volume_hands_to_shares=True)
+
+
+def normalize_provider_bars(df: pd.DataFrame, provider_id: str) -> pd.DataFrame:
+    pid = str(provider_id or "").lower()
+    if pid in ("mootdx_local", "mootdx_online", "mootdx"):
+        return normalize_mootdx_bars(df)
+    if pid == "akshare":
+        return normalize_akshare_bars(df)
+    if pid == "tushare":
+        from instock.core.data.providers.tushare import normalize_tushare_bars
+
+        return normalize_tushare_bars(df)
+    if pid in ("eastmoney", "legacy_cache"):
+        out = df.copy()
+        if "date" in out.columns:
+            out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        return _ensure_hist_columns(out, volume_hands_to_shares=False)
+    return normalize_mootdx_bars(df)
+
+
 def normalize_mootdx_bars(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -40,20 +99,7 @@ def normalize_mootdx_bars(df: pd.DataFrame) -> pd.DataFrame:
         out = out.drop(columns=["volume"])
     rename = {k: v for k, v in MOOTDX_BAR_MAP.items() if k in out.columns and k != v}
     out = out.rename(columns=rename)
-    hist_cols = list(
-        __import__("instock.core.tablestructure", fromlist=["CN_STOCK_HIST_DATA"]).CN_STOCK_HIST_DATA[
-            "columns"
-        ].keys()
-    )
-    for c in hist_cols:
-        if c not in out.columns:
-            out[c] = None
-    keep = [c for c in hist_cols if c in out.columns]
-    out = out[keep]
-    if "volume" in out.columns:
-        # mootdx 日线成交量多为手，与 stockfetch 东财路径一致转为股
-        out["volume"] = pd.to_numeric(out["volume"], errors="coerce") * 100
-    return out
+    return _ensure_hist_columns(out, volume_hands_to_shares=True)
 
 
 def merge_tencent_valuation(spot_df: pd.DataFrame, tencent_by_code: Dict[str, Dict[str, Any]]) -> pd.DataFrame:

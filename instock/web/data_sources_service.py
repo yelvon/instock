@@ -207,6 +207,41 @@ def _tushare_detail() -> Dict[str, Any]:
     return detail
 
 
+def _akshare_detail() -> Dict[str, Any]:
+    detail: Dict[str, Any] = {
+        "provider_id": "akshare",
+        "healthcheck": False,
+        "sample_ok": False,
+        "sample_rows": 0,
+        "sample_error": None,
+        "active_in_chain": False,
+        "capabilities": ["daily_bar_raw", "daily_bar"],
+        "hint": "pip install akshare；volume 手→股；仅历史日线",
+    }
+    try:
+        from instock.core.data.providers.akshare import Provider
+
+        prov = Provider()
+        detail["healthcheck"] = prov.healthcheck()
+        if not detail["healthcheck"]:
+            detail["sample_error"] = "未安装 akshare"
+        else:
+            res = prov.fetch_bars("600000", "20240101", "20240131", adjust="raw")
+            if res.ok and res.data is not None and not res.data.empty:
+                detail["sample_ok"] = True
+                detail["sample_rows"] = int(len(res.data))
+            else:
+                detail["sample_error"] = res.error or "样本 K 线为空"
+    except Exception as e:
+        detail["sample_error"] = str(e)
+    prof = effective_data_profile()
+    chain = _chain_steps("daily_bar_raw", prof)
+    detail["active_in_chain"] = any(
+        x.get("provider") == "akshare" and x.get("role") == "chain" for x in chain
+    )
+    return detail
+
+
 def build_report() -> Dict[str, Any]:
     profile = effective_data_profile()
     bar_mode = effective_bar_mode()
@@ -223,6 +258,7 @@ def build_report() -> Dict[str, Any]:
         "mootdx_local",
         "mootdx_online",
         "tushare",
+        "akshare",
         "tencent",
     ]
     providers = [_provider_status(pid) for pid in provider_ids]
@@ -264,9 +300,11 @@ def build_report() -> Dict[str, Any]:
         "mootdx_local": _mootdx_local_detail(),
         "mootdx_online": _mootdx_online_detail(),
         "tushare": _tushare_detail(),
+        "akshare": _akshare_detail(),
         "providers": providers,
         "domains": domains,
         "recent_bar_batches": bar_batches,
+        "canonical": _canonical_block(),
         "management": {
             "docker_env": [
                 "INSTOCK_TDX_DIR=/tdx",
@@ -285,6 +323,15 @@ def build_report() -> Dict[str, Any]:
             "doc": "docs/plan/数据域.md",
         },
     }
+
+
+def _canonical_block() -> Dict[str, Any]:
+    try:
+        from instock.web.canonical_governance_service import get_canonical_summary
+
+        return get_canonical_summary()
+    except Exception as e:
+        return {"ready": False, "error": str(e)}
 
 
 def verify_eastmoney() -> Dict[str, Any]:
@@ -343,5 +390,19 @@ def verify_provider(provider_id: str, code: str = "600000") -> Dict[str, Any]:
             "code": code,
             "token_configured": bool(hc),
             "token_source": _tushare_token_source(),
+        }
+    if provider_id == "akshare":
+        from instock.core.data.providers.akshare import Provider
+
+        prov = Provider()
+        hc = prov.healthcheck()
+        res = prov.fetch_bars(code, "20240101", "20240131", adjust="raw")
+        return {
+            "ok": hc and res.ok and res.data is not None and not res.data.empty,
+            "healthcheck": hc,
+            "rows": int(len(res.data)) if res.ok and res.data is not None else 0,
+            "error": res.error,
+            "provider_id": provider_id,
+            "code": code,
         }
     return {"ok": False, "error": f"不支持 verify: {provider_id}"}

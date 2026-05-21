@@ -85,6 +85,15 @@ const emPush2Host = ref("auto");
 const runMsg = ref("");
 
 const KLINE_BAR_JOB = "mootdx_bars_sync_job";
+const CANONICAL_BAR_JOBS = new Set([
+  "sync_bars_mootdx_job",
+  "sync_bars_tushare_job",
+  "sync_bars_akshare_job",
+  "sync_bars_eastmoney_job",
+]);
+const isKlineBarJob = computed(
+  () => jobId.value === KLINE_BAR_JOB || CANONICAL_BAR_JOBS.has(jobId.value)
+);
 const SPOT_EASTMONEY_JOBS = new Set([
   "basic_data_daily_job",
   "execute_daily_job",
@@ -437,7 +446,17 @@ function stopPoll() {
   trackingId.value = null;
 }
 
+let detailPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopDetailPoll() {
+  if (detailPollTimer) {
+    clearInterval(detailPollTimer);
+    detailPollTimer = null;
+  }
+}
+
 async function showDetail(id: string) {
+  stopDetailPoll();
   detailId.value = id;
   const r = await fetch("/instock/api/sync/run_detail?id=" + encodeURIComponent(id));
   const j = await r.json();
@@ -453,6 +472,9 @@ async function showDetail(id: string) {
   detailErr.value = parts.length ? parts.join("\n\n") : "（无）";
   detailOut.value = row.stdout_tail || "";
   detailErrTail.value = row.stderr_tail || "";
+  if (row.status === "running") {
+    detailPollTimer = setInterval(() => void showDetail(id), 1500);
+  }
 }
 
 async function cancelRun() {
@@ -514,7 +536,7 @@ async function triggerRun() {
   if (jobId.value === "basic_data_daily_job") {
     payload.spot_data_source = spotSource.value || "eastmoney";
   }
-  if (jobId.value === "mootdx_bars_sync_job") {
+  if (jobId.value === KLINE_BAR_JOB) {
     payload.bar_data_source = barSource.value || "auto";
   }
   if (dm === "list") payload.date_list = dateList.value.trim();
@@ -1261,7 +1283,7 @@ onUnmounted(() => {
             Tushare 仅支持「遍历拉 K 线」；快照/日作业请用「默认快照数据源」或作业内「快照源」（东财/Baostock）。
           </template>
         </el-alert>
-        <el-form-item v-if="jobId === KLINE_BAR_JOB" label="K 线日线源">
+        <el-form-item v-if="jobId === KLINE_BAR_JOB && !CANONICAL_BAR_JOBS.has(jobId)" label="K 线日线源">
           <el-select v-model="barSource" style="width: 320px">
             <el-option label="自动链路（mootdx → Tushare → 东财）" value="auto" />
             <el-option label="仅 mootdx" value="mootdx" />
@@ -1282,13 +1304,13 @@ onUnmounted(() => {
             "
           >
             <el-radio-button label="default">默认</el-radio-button>
-            <el-radio-button label="list" :disabled="jobId === 'mootdx_bars_sync_job'">
+            <el-radio-button label="list" :disabled="isKlineBarJob">
               枚举
             </el-radio-button>
             <el-radio-button label="range">区间</el-radio-button>
           </el-radio-group>
           <el-text
-            v-if="jobId === 'mootdx_bars_sync_job'"
+            v-if="isKlineBarJob"
             size="small"
             type="info"
             style="display: block; margin-top: 6px"
@@ -1388,7 +1410,8 @@ onUnmounted(() => {
         </div>
       </template>
       <el-text size="small" type="info" class="table-hint">
-        勾选后批量删除；「删除全部已完成」不含运行中任务。日志在 instock/log/sync_job_history.json。
+        运行中任务点「查看」可自动刷新日志；触发作业后上方也会出现进度条。历史记录在
+        instock/log/sync_job_history.json（Docker 内一般为 /data/InStock/instock/log/sync_job_history.json）。
       </el-text>
       <el-table
         ref="runsTableRef"
@@ -1416,9 +1439,17 @@ onUnmounted(() => {
             }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="进度" width="160" show-overflow-tooltip>
+        <el-table-column label="进度" width="200" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.progress_bytes }} B / {{ row.progress_lines }} 行
+            <template v-if="(row.progress_total ?? 0) > 0">
+              {{ row.progress_current ?? 0 }}/{{ row.progress_total }}
+              <span v-if="row.progress_hint" class="muted">
+                · {{ String(row.progress_hint).replace(/^\[PROGRESS\]\s*/i, "") }}
+              </span>
+            </template>
+            <template v-else>
+              {{ row.progress_bytes ?? 0 }} B / {{ row.progress_lines ?? 0 }} 行
+            </template>
           </template>
         </el-table-column>
         <el-table-column prop="exit_code" label="退出码" width="80" align="center" />

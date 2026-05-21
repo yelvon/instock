@@ -48,6 +48,52 @@ def ensure_data_batch_table() -> None:
     mdb.executeSql(sql)
 
 
+def record_canonical_batch(
+    provider_id: str,
+    *,
+    scope_key: str = "",
+    row_count: int = 0,
+    date_from: Optional[datetime.date] = None,
+    date_to: Optional[datetime.date] = None,
+    job_id: Optional[str] = None,
+    status: str = "success",
+) -> str:
+    """标准行情合并写入的批次血缘（不依赖 FetchResult）。"""
+    ensure_data_batch_table()
+    batch_id = str(uuid.uuid4())
+    prof = effective_data_profile()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sql = """
+    INSERT INTO `data_batch` (
+      `batch_id`, `domain_id`, `trade_date`, `date_from`, `date_to`,
+      `scope_type`, `scope_key`, `row_count`, `source_provider`,
+      `enrich_providers`, `mixed_source`, `adjust_type`, `profile`,
+      `input_batches`, `status`, `job_id`, `created_at`
+    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    params = (
+        batch_id,
+        "daily_bar_raw",
+        None,
+        date_from,
+        date_to,
+        "code",
+        scope_key or None,
+        row_count,
+        provider_id,
+        json.dumps([]),
+        0,
+        "raw",
+        prof,
+        json.dumps([]),
+        status,
+        job_id,
+        now,
+    )
+    mdb.executeSql(sql, params)
+    return batch_id
+
+
 def record_batch(
     result: FetchResult,
     *,
