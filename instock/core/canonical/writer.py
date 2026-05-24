@@ -122,29 +122,41 @@ class CanonicalBarWriter:
     ) -> MergeStats:
         stats = MergeStats()
         code = str(code).zfill(6)[:6]
+        if not rows:
+            return stats
         bid = batch_id or record_canonical_batch(
             self.provider_id,
             scope_key=code,
             row_count=len(rows),
             job_id="canonical_bar_writer",
         )
-        for row in rows:
-            try:
-                self._merge_one(code, row, bid, stats)
-            except Exception as e:
-                stats.errors += 1
-                logger.warning("canonical merge %s %s: %s", code, row.get("date"), e)
+        conn = pymysql.connect(**mdb.MYSQL_CONN_DBAPI)
+        try:
+            existing_map = self._load_existing_map(conn, code)
+            for row in rows:
+                try:
+                    self._merge_one(code, row, bid, stats, conn, existing_map)
+                except Exception as e:
+                    stats.errors += 1
+                    logger.warning("canonical merge %s %s: %s", code, row.get("date"), e)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         return stats
 
-    def _fetch_existing(self, code: str, dt) -> Optional[Dict[str, Any]]:
-        sql = f"SELECT * FROM `{TABLE_BAR}` WHERE code=%s AND date=%s AND adjust_type=%s"
-        with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
-            with conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(sql, (code, dt, self.adjust_type))
-                return cur.fetchone()
+    def _load_existing_map(self, conn: pymysql.Connection, code: str) -> Dict[Any, Dict[str, Any]]:
+        sql = f"SELECT * FROM `{TABLE_BAR}` WHERE code=%s AND adjust_type=%s"
+        with conn.cursor(pymysql.cursors.DictCursor) as cur:
+            cur.execute(sql, (code, self.adjust_type))
+            rows = cur.fetchall() or []
+        return {r["date"]: r for r in rows}
 
     def _record_contribution(
         self,
+        conn: pymysql.Connection,
         code: str,
         dt,
         batch_id: str,
@@ -158,23 +170,21 @@ class CanonicalBarWriter:
          row_hash, quality_score, merge_action)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """
-        with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql,
-                    (
-                        dt,
-                        code,
-                        self.adjust_type,
-                        self.provider_id,
-                        batch_id,
-                        json.dumps(fields_filled, ensure_ascii=False),
-                        row_hash,
-                        self.quality_score,
-                        merge_action,
-                    ),
-                )
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    dt,
+                    code,
+                    self.adjust_type,
+                    self.provider_id,
+                    batch_id,
+                    json.dumps(fields_filled, ensure_ascii=False),
+                    row_hash,
+                    self.quality_score,
+                    merge_action,
+                ),
+            )
 
     def _merge_one(
         self,
@@ -182,22 +192,25 @@ class CanonicalBarWriter:
         incoming: Dict[str, Any],
         batch_id: str,
         stats: MergeStats,
+        conn: pymysql.Connection,
+        existing_map: Dict[Any, Dict[str, Any]],
     ) -> None:
         dt = incoming.get("date")
         if dt is None:
             stats.errors += 1
             return
-        existing = self._fetch_existing(code, dt)
+        existing = existing_map.get(dt)
         inc = {k: incoming.get(k) for k in q.CORE_FIELDS + q.OPTIONAL_FIELDS}
         inc_hash = q.row_hash(inc)
         inc_score = q.completeness_score(inc)
 
         if existing is None:
-            self._insert(code, dt, inc, inc_score, batch_id)
+            self._insert(conn, code, dt, inc, inc_score, batch_id)
             stats.inserted += 1
             self._record_contribution(
-                code, dt, batch_id, q.fields_present(inc), inc_hash, "insert"
+                conn, code, dt, batch_id, q.fields_present(inc), inc_hash, "insert"
             )
+            existing_map[dt] = {"date": dt, "code": code, "quality_status": "partial"}
             return
 
         ex = {k: existing.get(k) for k in q.CORE_FIELDS + q.OPTIONAL_FIELDS}
@@ -206,14 +219,14 @@ class CanonicalBarWriter:
 
         if q.price_conflict(ex, inc) and not q.fields_missing(ex):
             stats.conflict += 1
-            self._mark_suspect(code, dt, existing, batch_id)
+            self._mark_suspect(conn, code, dt, existing, batch_id)
             stats.suspect += 1
-            self._record_contribution(code, dt, batch_id, [], inc_hash, "conflict")
+            self._record_contribution(conn, code, dt, batch_id, [], inc_hash, "conflict")
             return
 
         if ex_complete:
             stats.skipped += 1
-            self._record_contribution(code, dt, batch_id, [], inc_hash, "skip")
+            self._record_contribution(conn, code, dt, batch_id, [], inc_hash, "skip")
             return
 
         fill_fields = [
@@ -223,7 +236,7 @@ class CanonicalBarWriter:
         ]
         if not fill_fields:
             stats.skipped += 1
-            self._record_contribution(code, dt, batch_id, [], inc_hash, "skip")
+            self._record_contribution(conn, code, dt, batch_id, [], inc_hash, "skip")
             return
 
         merged = dict(ex)
@@ -236,12 +249,13 @@ class CanonicalBarWriter:
         if self.quality_score > q.provider_quality(str(primary)):
             primary = self.provider_id
 
-        self._update_row(code, dt, merged, new_score, status, primary, mask, batch_id)
+        self._update_row(conn, code, dt, merged, new_score, status, primary, mask, batch_id)
         stats.filled += 1
-        self._record_contribution(code, dt, batch_id, fill_fields, inc_hash, "fill")
+        self._record_contribution(conn, code, dt, batch_id, fill_fields, inc_hash, "fill")
 
     def _insert(
         self,
+        conn: pymysql.Connection,
         code: str,
         dt,
         row: Dict[str, Any],
@@ -263,13 +277,12 @@ class CanonicalBarWriter:
         vals += [status, score, self.provider_id, json.dumps(mask), batch_id]
         ph = ",".join(["%s"] * len(vals))
         sql = f"INSERT INTO `{TABLE_BAR}` ({','.join(cols)}) VALUES ({ph})"
-        with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, vals)
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(sql, vals)
 
     def _update_row(
         self,
+        conn: pymysql.Connection,
         code: str,
         dt,
         row: Dict[str, Any],
@@ -293,13 +306,12 @@ class CanonicalBarWriter:
             f"UPDATE `{TABLE_BAR}` SET {','.join(sets)} "
             "WHERE code=%s AND date=%s AND adjust_type=%s"
         )
-        with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, vals)
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(sql, vals)
 
     def _mark_suspect(
         self,
+        conn: pymysql.Connection,
         code: str,
         dt,
         existing: Dict[str, Any],
@@ -311,10 +323,8 @@ class CanonicalBarWriter:
             "source_mask=%s, last_batch_id=%s "
             "WHERE code=%s AND date=%s AND adjust_type=%s"
         )
-        with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql,
-                    (json.dumps(mask), batch_id, code, dt, self.adjust_type),
-                )
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (json.dumps(mask), batch_id, code, dt, self.adjust_type),
+            )

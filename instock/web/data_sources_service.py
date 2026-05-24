@@ -98,6 +98,22 @@ def _mootdx_local_detail() -> Dict[str, Any]:
     p = Path(d)
     detail["dir_exists"] = p.is_dir()
     detail["vipdoc_exists"] = (p / "vipdoc").is_dir()
+    detail["lday_sh_count"] = 0
+    detail["lday_sz_count"] = 0
+    if detail["vipdoc_exists"]:
+        try:
+            sh_lday = p / "vipdoc" / "sh" / "lday"
+            sz_lday = p / "vipdoc" / "sz" / "lday"
+            if sh_lday.is_dir():
+                detail["lday_sh_count"] = sum(
+                    1 for x in sh_lday.iterdir() if x.suffix.lower() == ".day"
+                )
+            if sz_lday.is_dir():
+                detail["lday_sz_count"] = sum(
+                    1 for x in sz_lday.iterdir() if x.suffix.lower() == ".day"
+                )
+        except Exception:
+            pass
     if not detail["dir_exists"]:
         detail["sample_error"] = f"目录不存在: {d}"
         return detail

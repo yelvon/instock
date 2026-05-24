@@ -42,9 +42,16 @@ services:
       db_database: ${DB_DATABASE:-instockdb}
       db_port: ${DB_PORT:-3306}
       TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
+      # Parallels 通达信本地 vipdoc（宿主机路径见 docker/.env 的 INSTOCK_TDX_DIR_HOST）
+      INSTOCK_TDX_DIR: /tdx
+      INSTOCK_UNIVERSE_SOURCE: ${INSTOCK_UNIVERSE_SOURCE:-local}
+      INSTOCK_BAR_DATA_SOURCE: ${INSTOCK_BAR_DATA_SOURCE:-mootdx}
+      INSTOCK_USE_DATA_REGISTRY: ${INSTOCK_USE_DATA_REGISTRY:-1}
+      INSTOCK_BAR_MODE: raw
     volumes:
       - ${INSTOCK_PROXY_FILE:-${HOME}/instock-docker/instockproxy.txt}:/data/InStock/instock/config/proxy.txt
       - ${INSTOCK_COOKIE_FILE:-${HOME}/instock-docker/eastmoneycookie.txt}:/data/InStock/instock/config/eastmoney_cookie.txt
+      - ${INSTOCK_TDX_DIR_HOST:-/Users/fwj/tdx-docker-mount}:/tdx:ro
     networks:
       - instock_net
     # Apple Silicon 若运行异常，可取消下行注释

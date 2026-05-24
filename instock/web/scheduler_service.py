@@ -180,6 +180,9 @@ def tick() -> None:
             if len(_fired_minute_keys) > _MAX_FIRE_KEYS:
                 _fired_minute_keys = set(list(_fired_minute_keys)[-_MAX_FIRE_KEYS // 2 :])
         try:
+            extra = sch.get("extra_env")
+            if extra is not None and not isinstance(extra, dict):
+                extra = None
             syncsvc.start_job(
                 sch["job_id"],
                 date_mode=str(sch.get("date_mode") or "default"),
@@ -191,6 +194,7 @@ def tick() -> None:
                 trigger_source="scheduler",
                 schedule_id=sid,
                 schedule_title=str(sch.get("title") or ""),
+                extra_env=extra,
             )
             logging.info(
                 "scheduler: 已触发 %s job=%s time=%s",

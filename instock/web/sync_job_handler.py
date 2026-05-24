@@ -101,6 +101,9 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": "缺少 job_id"}, ensure_ascii=False))
             return
         try:
+            extra_env = body.get("extra_env")
+            if extra_env is not None and not isinstance(extra_env, dict):
+                extra_env = None
             rec = syncsvc.start_job(
                 job_id,
                 date_mode=body.get("date_mode") or "default",
@@ -109,6 +112,7 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
                 date_list=body.get("date_list") or "",
                 spot_data_source=(body.get("spot_data_source") or ""),
                 bar_data_source=(body.get("bar_data_source") or ""),
+                extra_env=extra_env,
             )
             self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
         except Exception as e:

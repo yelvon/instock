@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { useRouter } from "vue-router";
+
+const router = useRouter();
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
@@ -86,6 +89,7 @@ const runMsg = ref("");
 
 const KLINE_BAR_JOB = "mootdx_bars_sync_job";
 const CANONICAL_BAR_JOBS = new Set([
+  "sync_bars_mootdx_local_job",
   "sync_bars_mootdx_job",
   "sync_bars_tushare_job",
   "sync_bars_akshare_job",
@@ -146,6 +150,23 @@ const eastmoneyTestMsg = ref("");
 const eastmoneyTestLogs = ref("");
 const eastmoneyProbeId = ref("");
 let stopEastmoneyProbe: (() => void) | null = null;
+
+const govEnv = ref<Record<string, string | boolean>>({});
+const tdxConfigured = computed(() => {
+  const v = govEnv.value.tdx_configured;
+  return v === true || v === "true" || v === 1 || v === "1";
+});
+const tdxDirDisplay = computed(() => String(govEnv.value.INSTOCK_TDX_DIR || "").trim());
+
+async function loadGovEnv() {
+  try {
+    const r = await fetch("/instock/api/sync/governance_env");
+    const j = await r.json();
+    if (j.ok) govEnv.value = j.env || {};
+  } catch {
+    /* ignore */
+  }
+}
 
 const mootdxProbeMode = ref<"auto" | "local" | "online">("auto");
 const mootdxTesting = ref(false);
@@ -1008,6 +1029,7 @@ onMounted(async () => {
   await loadCookie();
   await loadScheduler();
   initDhDates();
+  void loadGovEnv();
 });
 
 onUnmounted(() => {
@@ -1023,6 +1045,16 @@ onUnmounted(() => {
     subtitle="Cookie、缺口快检与快照偏好。定时任务、执行记录与 data_batch 血缘请使用侧栏「任务中心」。"
   >
     <div class="sync-page">
+    <el-alert type="success" show-icon :closable="false" class="block">
+      <template #title>通达信本地 K 线（vipdoc）</template>
+      <template #default>
+        已配置 <code>INSTOCK_TDX_DIR</code> 时，请在
+        <el-button link type="primary" @click="router.push({ path: '/jobs', query: { tab: 'mootdx' } })">
+          任务中心 → 通达信本地
+        </el-button>
+        一键扫描代码表并补标准库；本页仍负责 Cookie、东财快照与其它数据源预设。
+      </template>
+    </el-alert>
     <el-card shadow="never" class="block">
       <template #header>
         <span>一键默认设置</span>
@@ -1168,9 +1200,31 @@ onUnmounted(() => {
       }}</el-text>
     </el-card>
 
+    <el-alert
+      v-if="!tdxConfigured"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="block"
+    >
+      <template #title>未配置 INSTOCK_TDX_DIR</template>
+      <template #default>
+        当前 Web 进程读不到通达信路径（日志里会是 <code>INSTOCK_TDX_DIR=（未配置）</code>）。
+        请在 <code>docker/</code> 目录用 compose 重建容器（仅 restart 不会注入新环境变量）：
+        <pre class="fix-cmd">cd docker
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate instock
+docker exec InStock printenv INSTOCK_TDX_DIR   # 应输出 /tdx</pre>
+        并确认 Parallels 已开机、<code>~/tdx-docker-mount/vipdoc</code> 有 .day 文件。
+      </template>
+    </el-alert>
+
     <el-card shadow="never" class="block">
       <template #header>
-        <span>数据缺口自检</span>
+        <div class="card-head">
+          <span>数据缺口自检</span>
+          <el-tag v-if="tdxConfigured" type="success" size="small">TDX {{ tdxDirDisplay }}</el-tag>
+          <el-tag v-else type="danger" size="small">未配置 INSTOCK_TDX_DIR</el-tag>
+        </div>
       </template>
       <el-space wrap>
         <el-date-picker v-model="dhFrom" type="date" value-format="YYYY-MM-DD" placeholder="开始" />
@@ -1204,7 +1258,11 @@ onUnmounted(() => {
 
     <el-card shadow="never" class="block">
       <template #header>
-        <span>mootdx 连通测试</span>
+        <div class="card-head">
+          <span>mootdx 连通测试</span>
+          <el-tag v-if="tdxConfigured" type="success" size="small">已配置 {{ tdxDirDisplay }}</el-tag>
+          <el-tag v-else type="danger" size="small">未配置 INSTOCK_TDX_DIR</el-tag>
+        </div>
       </template>
       <el-text size="small" type="info">
         检测本地通达信（INSTOCK_TDX_DIR）或 mootdx 在线 K 线/证券列表；不阻塞页面。全市场代码请先执行作业「同步证券主表（mootdx）」。
@@ -1506,6 +1564,20 @@ onUnmounted(() => {
 }
 .block {
   border-radius: 10px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.fix-cmd {
+  margin: 8px 0 0;
+  padding: 10px;
+  font-size: 12px;
+  background: var(--el-fill-color-dark);
+  border-radius: 6px;
+  white-space: pre-wrap;
 }
 .preset-row {
   margin-bottom: 14px;

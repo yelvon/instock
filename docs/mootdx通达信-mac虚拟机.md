@@ -6,7 +6,7 @@
 
 **使用 Mac 本机安装的通达信**：看 **§2.1 Mac 版通达信能否直接读本地数据**。
 
-**文档导航**：[文档索引.md](./文档索引.md)
+**文档导航**：[文档索引.md](./文档索引.md) · **同步操作手册**：[通达信数据同步Mac.md](./通达信数据同步Mac.md)
 
 > InStock / mootdx 跑在 **Mac 本机或 Docker** 即可，**不需要**在通达信里再装 Python；只要磁盘上有标准 `vipdoc` 目录结构。
 
@@ -210,7 +210,33 @@ ls ~/tdx-local/vipdoc/sz/lday | head
 robocopy C:\new_tdx\vipdoc \\Mac\Home\tdx-local\vipdoc /E /XO /R:2 /W:3
 ```
 
+或使用仓库脚本（与上式等价）：
+
+```bat
+Z:\stock\instock\scripts\windows\sync_tdx_to_mac.bat
+```
+
 可做成 Windows **任务计划程序**，工作日 17:30 执行（晚于通达信自动下载时间）。
+
+### 5.4.1 从 Mac 一键触发 Windows 同步（Parallels）
+
+前提：已安装 **Parallels Desktop**，Windows 虚拟机名称默认 **Windows 11**，且已启用共享文件夹（Windows 内可见 **`Z:`** = Mac 用户目录）。
+
+在 **Mac 终端**（仓库根或 `instock` 目录均可）：
+
+```bash
+./scripts/trigger_tdx_sync_from_mac.sh
+```
+
+脚本会通过 `prlctl exec --current-user` 在虚拟机里执行 `sync_tdx_to_mac.bat`（`robocopy /XO` 增量），结束后自动跑 `tdx_local_status.sh` 检查 `~/tdx-local` 文件数量。
+
+| 环境变量 | 含义 |
+|----------|------|
+| `PRL_VM_NAME` | 虚拟机名，默认 `Windows 11` |
+| `PRL_START_VM=1` | VM 未运行时自动 `prlctl start`（默认开启） |
+| `SKIP_STATUS=1` | 不同步后校验 |
+
+若不用 Parallels CLI，仍可在 Windows CMD 手动运行 bat，或在 Mac 上用 `./scripts/sync_tdx_incremental.sh`（较慢）。
 
 ### 5.5 Parallels + Docker InStock 挂载
 

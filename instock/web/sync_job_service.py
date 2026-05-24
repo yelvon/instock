@@ -80,9 +80,10 @@ JOB_ITEMS: List[Dict[str, str]] = [
     {
         "id": "sync_stock_universe_job",
         "script": "sync_stock_universe_job.py",
-        "title": "同步证券主表（mootdx）",
-        "hint": "cn_stock_universe 全市场代码",
-        "description": "用 mootdx 在线拉沪/深证券列表（或本地 TDX vipdoc 扫描），过滤 A 股后写入 cn_stock_universe。供 mootdx 遍历拉 K 线使用；仅需日期模式选「默认」。环境变量 INSTOCK_UNIVERSE_SOURCE=online|local。",
+        "title": "同步证券主表",
+        "hint": "cn_stock_universe；本地扫描见通达信页",
+        "mootdx_panel": True,
+        "description": "写入 cn_stock_universe。默认在线列表；通达信本地页触发时会设 INSTOCK_UNIVERSE_SOURCE=local 扫描 vipdoc。",
     },
     {
         "id": "mootdx_bars_sync_job",
@@ -92,12 +93,22 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "description": "按 cn_stock_universe 逐只拉日线写入 cache/hist（走 daily_bar_raw Registry）。回测已优先读标准表 cn_stock_daily_bar。\n· 默认：从约 3 年前至今。\n· 日线源可选自动链路、仅 mootdx、仅 Tushare、仅东财。",
     },
     {
+        "id": "sync_bars_mootdx_local_job",
+        "script": "sync_bars_source_job.py",
+        "title": "标准库补数（通达信本地）",
+        "hint": "仅读 INSTOCK_TDX_DIR/vipdoc",
+        "canonical_source": "mootdx_local",
+        "mootdx_panel": True,
+        "description": "只读本地通达信 vipdoc，写入 cn_stock_daily_bar；需配置 INSTOCK_TDX_DIR 并先同步证券主表（本地扫描）。",
+    },
+    {
         "id": "sync_bars_mootdx_job",
         "script": "sync_bars_source_job.py",
-        "title": "标准库补数（mootdx）",
-        "hint": "写入 cn_stock_daily_bar",
+        "title": "标准库补数（mootdx 本地→在线）",
+        "hint": "本地失败后试 online",
         "canonical_source": "mootdx",
-        "description": "仅 mootdx（local→online）独立补标准日线表，幂等合并，不覆盖完整行。需先同步证券主表。",
+        "mootdx_panel": True,
+        "description": "先 mootdx_local，失败再 mootdx_online；写入标准日线表。",
     },
     {
         "id": "sync_bars_tushare_job",
@@ -551,6 +562,8 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
         cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
         if canon_src == "akshare":
             cmd.extend(["--workers", "2", "--sleep", "0.35"])
+        elif canon_src == "mootdx_local":
+            cmd.extend(["--workers", "1", "--sleep", "0.02"])
         return cmd
     if job_id == "mootdx_bars_sync_job":
         cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
@@ -598,6 +611,11 @@ def _worker(run_id: str) -> None:
         env.update(_bar_data_source_env(run.get("bar_data_source") or "auto"))
     elif (run.get("job_id") or "").startswith("sync_bars_"):
         env["INSTOCK_USE_DATA_REGISTRY"] = "0"
+    extra = run.get("extra_env") or {}
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            if k and v is not None:
+                env[str(k)] = str(v)
         try:
             from instock.core.sync_preferences import read_prefs
 
@@ -738,6 +756,7 @@ def start_job(
     trigger_source: str = "manual",
     schedule_id: str = "",
     schedule_title: str = "",
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     cmd = _build_command(job_id, date_mode, date_start, date_end, date_list)
     run_id = str(uuid.uuid4())
@@ -782,6 +801,7 @@ def start_job(
         "progress_total": 0,
         "post_verify": None,
         "batch_ids": [],
+        "extra_env": dict(extra_env or {}),
     }
     with _LOCK:
         _RUNS[run_id] = rec

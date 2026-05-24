@@ -12,8 +12,42 @@ SchedulerMode = Literal["keep", "merge", "replace"]
 PRESET_TUSHARE_KLINE = "tushare_kline"
 PRESET_EASTMONEY_CLASSIC = "eastmoney_classic"
 PRESET_BAOSTOCK_SPOT = "baostock_spot"
+PRESET_MOOTDX_LOCAL = "mootdx_local"
 
 _PRESETS: Dict[str, Dict[str, Any]] = {
+    PRESET_MOOTDX_LOCAL: {
+        "id": PRESET_MOOTDX_LOCAL,
+        "title": "通达信本地（推荐）",
+        "summary": "K 线走 vipdoc → 标准库；证券主表本地扫描；快照仍可用东财/Baostock",
+        "prefs": {
+            "default_spot_data_source": "auto",
+            "default_bar_data_source": "mootdx",
+            "eastmoney_push2_host": "auto",
+            "active_preset_id": PRESET_MOOTDX_LOCAL,
+        },
+        "scheduler_templates": [
+            {
+                "title": "工作日-证券主表(本地vipdoc)",
+                "job_id": "sync_stock_universe_job",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["17:00"],
+                "extra_env": {"INSTOCK_UNIVERSE_SOURCE": "local"},
+            },
+            {
+                "title": "工作日-标准库(通达信本地)",
+                "job_id": "sync_bars_mootdx_local_job",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["22:00"],
+            },
+            {
+                "title": "工作日-股票快照",
+                "job_id": "basic_data_daily_job",
+                "spot_data_source": "auto",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["17:30"],
+            },
+        ],
+    },
     PRESET_TUSHARE_KLINE: {
         "id": PRESET_TUSHARE_KLINE,
         "title": "Tushare K 线优先（推荐）",
@@ -139,6 +173,7 @@ def _normalize_template(tpl: Dict[str, Any]) -> Dict[str, Any]:
         "times": [str(t).strip() for t in times if str(t).strip()],
         "spot_data_source": spot,
         "bar_data_source": bar,
+        "extra_env": dict(tpl.get("extra_env") or {}),
     }
 
 

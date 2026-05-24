@@ -51,6 +51,9 @@ trusted-host = mirrors.aliyun.com" > /etc/pip.conf && \
     pip install urllib3 && \
     pip install tornado && \
     pip install tushare && \
+    pip install 'mootdx>=0.11.7' && \
+    pip install 'akshare>=1.14.0' && \
+    pip install 'PyYAML>=6.0' && \
     pip install mini-racer && \
     pip install easytrader && \
     mkdir ta-lib && \

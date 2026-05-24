@@ -14,10 +14,11 @@ import {
   runMootdxProbePoll,
   startMootdxProbe,
 } from "@/api/mootdxProbe";
+import MootdxLocalPanel from "@/features/mootdx/MootdxLocalPanel.vue";
 
 const router = useRouter();
 const route = useRoute();
-const activeTab = ref(String(route.query.tab || "manual"));
+const activeTab = ref(String(route.query.tab || "mootdx"));
 
 interface JobItem {
   id: string;
@@ -101,10 +102,16 @@ const runMsg = ref("");
 
 const KLINE_BAR_JOB = "mootdx_bars_sync_job";
 const CANONICAL_BAR_JOBS = new Set([
+  "sync_bars_mootdx_local_job",
   "sync_bars_mootdx_job",
   "sync_bars_tushare_job",
   "sync_bars_akshare_job",
   "sync_bars_eastmoney_job",
+]);
+const MOOTDX_LOCAL_JOBS = new Set([
+  "sync_stock_universe_job",
+  "sync_bars_mootdx_local_job",
+  "sync_bars_mootdx_job",
 ]);
 const isKlineBarJob = computed(
   () => jobId.value === KLINE_BAR_JOB || CANONICAL_BAR_JOBS.has(jobId.value)
@@ -601,12 +608,17 @@ async function pollOnce() {
   }
 }
 
-function startPoll(id: string) {
+function startPoll(id: string, label?: string) {
   stopPoll();
   trackingId.value = id;
+  runningLabel.value = label || "";
   progressPanel.value = true;
   void pollOnce();
   pollTimer = setInterval(() => void pollOnce(), 1200);
+}
+
+function onMootdxRunStarted(runId: string, label: string) {
+  startPoll(runId, label);
 }
 
 function stopPoll() {
@@ -795,10 +807,22 @@ watch(activeTab, (t) => {
     void loadGovEnv();
   }
   if (t === "sources") void loadDataSources();
+  if (t === "mootdx") void loadDataSources();
   if (t === "schedule") void loadScheduler();
 });
 
 watch(batchDomain, () => void loadBatches());
+
+watch(
+  () => route.query.tab,
+  (t) => {
+    const tab = String(t || "");
+    if (["manual", "mootdx", "schedule", "runs", "lineage", "sources", "governance"].includes(tab)) {
+      activeTab.value = tab;
+    }
+  },
+  { immediate: true }
+);
 
 onMounted(async () => {
   document.documentElement.classList.add("dark");
@@ -863,11 +887,35 @@ onUnmounted(() => {
       </el-card>
 
       <el-tabs v-model="activeTab" type="border-card" class="main-tabs">
+        <el-tab-pane label="通达信本地" name="mootdx">
+          <MootdxLocalPanel @run-started="onMootdxRunStarted" />
+        </el-tab-pane>
+
         <el-tab-pane label="手动作业" name="manual">
+          <el-alert type="info" :closable="false" show-icon class="mb">
+            日常 K 线补数推荐用
+            <el-button link type="primary" @click="activeTab = 'mootdx'">「通达信本地」</el-button>
+            页；此处保留全部作业与多源选项。
+          </el-alert>
           <el-form label-width="100px" class="mt">
             <el-form-item label="作业">
               <el-select v-model="jobId" filterable style="width: 100%; max-width: 480px">
-                <el-option v-for="j in jobs" :key="j.id" :label="j.title" :value="j.id" />
+                <el-option-group label="通达信 / 标准库">
+                  <el-option
+                    v-for="j in jobs.filter((x) => MOOTDX_LOCAL_JOBS.has(x.id))"
+                    :key="j.id"
+                    :label="j.title"
+                    :value="j.id"
+                  />
+                </el-option-group>
+                <el-option-group label="其它作业">
+                  <el-option
+                    v-for="j in jobs.filter((x) => !MOOTDX_LOCAL_JOBS.has(x.id))"
+                    :key="j.id"
+                    :label="j.title"
+                    :value="j.id"
+                  />
+                </el-option-group>
               </el-select>
             </el-form-item>
             <el-form-item label="快照源">

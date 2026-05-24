@@ -92,6 +92,14 @@ def normalize_mootdx_bars(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     out = df.copy()
+    # mootdx_online / Reader.daily 常把 date 放在 index（字符串），须先落到列里
+    if "date" not in out.columns:
+        if out.index.name == "date" or (
+            len(out.index) and isinstance(out.index[0], (str, pd.Timestamp))
+        ):
+            out = out.reset_index()
+            if out.columns[0] != "date":
+                out = out.rename(columns={out.columns[0]: "date"})
     if "datetime" in out.columns and "date" not in out.columns:
         out["date"] = pd.to_datetime(out["datetime"]).dt.strftime("%Y-%m-%d")
     # online bars 可能同时有 vol 与 volume，避免 rename 后出现重复列名

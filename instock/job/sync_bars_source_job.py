@@ -59,6 +59,12 @@ def _sync_one(
             return code, False, f"empty provider={pid or source} {err or ''}"
         writer = CanonicalBarWriter(pid or source)
         stats = writer.write_dataframe(code, df)
+        if stats.inserted + stats.filled == 0 and len(df) > 0:
+            return (
+                code,
+                False,
+                f"写入 0 行（拉取 {len(df)} 行），请检查日期列/归一化 provider={pid or source}",
+            )
         msg = f"rows={len(df)} {stats.to_dict()}"
         if also_pickle:
             try:
@@ -81,6 +87,9 @@ def _sync_one(
 def _default_workers(source: str) -> int:
     if source == "akshare":
         return max(1, int(os.environ.get("INSTOCK_AKSHARE_WORKERS", "2")))
+    # Parallels/SMB 挂载 vipdoc 时并发读 .day 易触发 Errno 5 EIO
+    if source == "mootdx_local":
+        return max(1, int(os.environ.get("INSTOCK_MOOTDX_LOCAL_WORKERS", "1")))
     return 4
 
 
@@ -130,6 +139,11 @@ def main():
         _emit(
             "[HINT] Akshare 易被限流/断连，默认 workers=2；"
             "若大量 RemoteDisconnected 请改为 --workers 1 --sleep 0.5"
+        )
+    if args.source == "mootdx_local":
+        _emit(
+            "[HINT] 本地通达信补数默认 workers=1（单连接写库）；"
+            "若见 MySQL Errno 99 请停止任务后重建 InStock 容器再跑"
         )
 
     ok_n = fail_n = 0

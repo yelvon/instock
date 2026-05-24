@@ -77,7 +77,7 @@ const form = ref({
   stampTaxRate: 0.001,
   maxWeightPerSymbol: 0.1,
   requirePrerequisites: true,
-  barDataSource: "auto",
+  barDataSource: "mootdx",
 });
 
 function pct(v: unknown): string {
@@ -204,8 +204,8 @@ async function runPrecheck() {
 }
 
 const CANONICAL_BAR_JOB: Record<string, string> = {
-  auto: "sync_bars_mootdx_job",
-  mootdx: "sync_bars_mootdx_job",
+  mootdx: "sync_bars_mootdx_local_job",
+  mootdx_online: "sync_bars_mootdx_job",
   tushare: "sync_bars_tushare_job",
   akshare: "sync_bars_akshare_job",
   eastmoney: "sync_bars_eastmoney_job",
@@ -213,8 +213,8 @@ const CANONICAL_BAR_JOB: Record<string, string> = {
 
 async function triggerKlineSync() {
   syncSubmitting.value = true;
-  const src = form.value.barDataSource || "tushare";
-  const canonJob = CANONICAL_BAR_JOB[src] || "sync_bars_tushare_job";
+  const src = form.value.barDataSource || "mootdx";
+  const canonJob = CANONICAL_BAR_JOB[src] || "sync_bars_mootdx_local_job";
   try {
     const r = await fetch("/instock/api/sync/trigger", {
       method: "POST",
@@ -241,7 +241,7 @@ async function triggerKlineSync() {
 }
 
 function goDataSources() {
-  void router.push({ path: "/jobs", query: { tab: "sources" } });
+  void router.push({ path: "/jobs", query: { tab: "mootdx" } });
 }
 
 function goLineage() {
@@ -375,17 +375,18 @@ void loadRuns();
           </el-form-item>
           <el-form-item label="补数数据源">
             <el-select v-model="form.barDataSource" size="small">
-              <el-option label="mootdx（标准库作业）" value="mootdx" />
-              <el-option label="Tushare（标准库作业）" value="tushare" />
-              <el-option label="Akshare（标准库作业）" value="akshare" />
-              <el-option label="东财（标准库作业）" value="eastmoney" />
+              <el-option label="通达信本地 vipdoc（推荐）" value="mootdx" />
+              <el-option label="mootdx 本地→在线" value="mootdx_online" />
+              <el-option label="Tushare" value="tushare" />
+              <el-option label="Akshare" value="akshare" />
+              <el-option label="东财" value="eastmoney" />
               <el-option label="仅东财" value="eastmoney" />
             </el-select>
           </el-form-item>
           <el-form-item>
             <el-space wrap>
               <el-button size="small" :loading="precheckLoading" @click="runPrecheck">先检查数据</el-button>
-              <el-button size="small" @click="goDataSources">数据源工作台</el-button>
+              <el-button size="small" @click="goDataSources">通达信本地补数</el-button>
               <el-button size="small" :loading="syncSubmitting" @click="triggerKlineSync">
                 触发 K 线补数
               </el-button>
@@ -411,7 +412,7 @@ void loadRuns();
                 <div v-if="precheckMissingSpot.length">缺主快照交易日：{{ precheckMissingSpot.slice(0, 8).join(", ") }}{{ precheckMissingSpot.length > 8 ? "…" : "" }}</div>
                 <div class="muted">日线缺口优先在任务中心配置/验证 Tushare，再触发 K 线补数任务。</div>
                 <el-space wrap class="mt-mini">
-                  <el-button link type="primary" @click="goDataSources">检查 Tushare</el-button>
+                  <el-button link type="primary" @click="goDataSources">通达信本地页</el-button>
                   <el-button link type="primary" @click="goLineage">查看数据血缘</el-button>
                 </el-space>
               </div>
@@ -428,7 +429,7 @@ void loadRuns();
             <template #default>
               <pre class="mini-pre">{{ JSON.stringify(createGapReport, null, 2) }}</pre>
               <el-space wrap>
-                <el-button link type="primary" @click="goDataSources">去验证 Tushare</el-button>
+                <el-button link type="primary" @click="goDataSources">去配置通达信本地</el-button>
                 <el-button link type="primary" @click="goLineage">去补齐数据</el-button>
               </el-space>
             </template>
