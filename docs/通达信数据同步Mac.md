@@ -73,6 +73,24 @@ INSTOCK_TDX_DIR_HOST=/Users/<你的用户名>/tdx-local
 
 ## 5. 同步数据（三选一）
 
+### 5.0 页面一键运维（推荐）
+
+开发时先在 **Mac 终端**启动宿主机服务（保持运行）：
+
+```bash
+cd /Users/<你>/stock/instock
+python3 scripts/host_ops_server.py
+```
+
+然后在浏览器打开 **回测数据管理 → 补数** 或 **任务中心 → 通达信本地**，使用 **「Mac 宿主机运维」** 卡片：
+
+| 按钮 | 等价命令 |
+|------|----------|
+| 同步 vipdoc → ~/tdx-local | `bash ./scripts/trigger_tdx_sync_from_mac.sh` |
+| 应用挂载并重建容器 | `./scripts/docker_dev_reload.sh`（可勾选跳过 npm / --quick） |
+
+日志在页面文本框内实时刷新。`docker-compose.dev.yml` 已配置 `INSTOCK_HOST_OPS_URL=http://host.docker.internal:19888`。
+
 ### 5.1 方式 A：Mac 一键触发（推荐日常）
 
 在 **Mac 终端**执行（会自动在 Windows 里跑 `robocopy /XO` 增量）：
@@ -216,6 +234,7 @@ cd /Users/<你>/stock/instock
 
 | 脚本 | 运行环境 | 用途 |
 |------|----------|------|
+| `scripts/host_ops_server.py` | Mac | 宿主机运维 API（页面按钮依赖） |
 | `scripts/trigger_tdx_sync_from_mac.sh` | Mac | **推荐**：`prlctl` 触发 Windows 同步 |
 | `scripts/windows/sync_tdx_to_mac.bat` | Windows | `robocopy /XO` 增量 |
 | `scripts/tdx_local_status.sh` | Mac | 检查 `~/tdx-local` 文件数 |
@@ -250,7 +269,9 @@ cd /Users/<你>/stock/instock
 
 ### Q5：标准库行数很少，但文件已有 9000+？
 
-文件同步 ≠ 已入库。需在任务中心执行 **② 补标准日线（仅本地）** 写入 `cn_stock_daily_bar`。
+文件同步 ≠ 已入库。需在 **回测数据管理 → 补数**（或任务中心 **② 补标准日线（仅本地）**）写入 `cn_stock_daily_bar`。
+
+日线回测读标准表，**不**依赖 `cn_stock_spot`。补数后可在 **回测数据管理 → 标准日线 / 缺口诊断** 核对；严格检查请用 `profile=backtest`（回测页「先检查数据」已默认）。
 
 ### Q6：补标准日线大量 `Can't connect to MySQL` / `Errno 99`？
 

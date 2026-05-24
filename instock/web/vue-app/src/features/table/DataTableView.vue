@@ -30,7 +30,22 @@ interface TableMetaOk {
   is_realtime: boolean;
   date_default: string;
   column_names: ColInfo[];
+  view_modes?: string[];
+  default_filters?: Record<string, string>;
+  requires_view_filter?: boolean;
 }
+
+const props = withDefaults(
+  defineProps<{
+    fixedTableName?: string;
+    embedded?: boolean;
+    defaultViewMode?: "cross_section" | "series";
+  }>(),
+  {
+    embedded: false,
+    defaultViewMode: "cross_section",
+  }
+);
 
 const route = useRoute();
 const router = useRouter();
@@ -59,9 +74,27 @@ function unknownErrorMessage(e: unknown, fallback: string): string {
 }
 
 const tableName = computed(() =>
+  props.fixedTableName ||
   queryParamOne(route.query.table_name as string | string[] | undefined)
 );
 const dateStr = ref("");
+const viewMode = ref<"cross_section" | "series">(props.defaultViewMode);
+const codeStr = ref("");
+const adjustType = ref("raw");
+const dateFromStr = ref("");
+const dateToStr = ref("");
+
+const hasViewModes = computed(
+  () => (meta.value?.view_modes?.length ?? 0) > 0 || !!props.fixedTableName
+);
+
+function canLoadRows(): boolean {
+  if (!tableName.value || !meta.value) return false;
+  if (viewMode.value === "series") {
+    return !!codeStr.value.trim();
+  }
+  return !!dateStr.value;
+}
 
 const meta = ref<TableMetaOk | null>(null);
 const metaLoading = ref(false);
@@ -116,6 +149,15 @@ async function loadTableMeta(tn: string) {
     if (ac.signal.aborted || reqId !== metaReqId) return;
     meta.value = j as TableMetaOk;
     if (j.date_default) dateStr.value = j.date_default;
+    if (j.default_filters?.adjust_type) {
+      adjustType.value = j.default_filters.adjust_type;
+    }
+    if (j.view_modes?.length) {
+      const preferred = props.defaultViewMode;
+      viewMode.value = j.view_modes.includes(preferred)
+        ? preferred
+        : (j.view_modes[0] as "cross_section" | "series");
+    }
   } catch (e) {
     if (ac.signal.aborted || reqId !== metaReqId) return;
     const msg = unknownErrorMessage(e, "加载表信息失败");
@@ -152,10 +194,18 @@ async function loadTableRows(
   const ps = opts?.all ? 2000 : (opts?.pageSize ?? pageSize.value);
   const qs = new URLSearchParams({
     name,
-    date,
     page: String(pageNum),
     page_size: String(ps),
   });
+  if (viewMode.value) qs.set("view_mode", viewMode.value);
+  if (adjustType.value) qs.set("adjust_type", adjustType.value);
+  if (viewMode.value === "series") {
+    if (codeStr.value.trim()) qs.set("code", codeStr.value.trim());
+    if (dateFromStr.value) qs.set("date_from", dateFromStr.value);
+    if (dateToStr.value) qs.set("date_to", dateToStr.value);
+  } else if (date) {
+    qs.set("date", date);
+  }
   if (sortCol.value) {
     qs.set("sort_col", sortCol.value);
     qs.set("sort_dir", sortDir.value || "desc");
@@ -239,16 +289,26 @@ watch(
 );
 
 watch(
-  () => [tableName.value, dateStr.value, meta.value?.table_name] as const,
-  ([name, date]) => {
+  () =>
+    [
+      tableName.value,
+      dateStr.value,
+      meta.value?.table_name,
+      viewMode.value,
+      codeStr.value,
+      adjustType.value,
+      dateFromStr.value,
+      dateToStr.value,
+    ] as const,
+  ([name]) => {
     rows.value = [];
     totalRows.value = 0;
     page.value = 1;
     sortCol.value = null;
     sortDir.value = null;
     rowsError.value = null;
-    if (!name || !date || !meta.value) return;
-    void loadTableRows(name, date, 1);
+    if (!name || !meta.value || !canLoadRows()) return;
+    void loadTableRows(name, dateStr.value, 1);
   }
 );
 
@@ -402,7 +462,7 @@ function onCellClicked(e: CellClickedEvent) {
 }
 
 async function exportExcel() {
-  if (!tableName.value || !dateStr.value) return;
+  if (!tableName.value || !canLoadRows()) return;
   try {
     exportLoading.value = true;
     const allPages: Record<string, unknown>[] = [];
@@ -411,10 +471,18 @@ async function exportExcel() {
     while (allPages.length < total) {
       const qs = new URLSearchParams({
         name: tableName.value,
-        date: dateStr.value,
         page: String(p),
         page_size: "2000",
       });
+      if (viewMode.value) qs.set("view_mode", viewMode.value);
+      if (adjustType.value) qs.set("adjust_type", adjustType.value);
+      if (viewMode.value === "series") {
+        if (codeStr.value.trim()) qs.set("code", codeStr.value.trim());
+        if (dateFromStr.value) qs.set("date_from", dateFromStr.value);
+        if (dateToStr.value) qs.set("date_to", dateToStr.value);
+      } else {
+        qs.set("date", dateStr.value);
+      }
       if (sortCol.value) {
         qs.set("sort_col", sortCol.value);
         qs.set("sort_dir", sortDir.value || "desc");
@@ -434,7 +502,10 @@ async function exportExcel() {
     const ws = XLSX.utils.json_to_sheet(allPages);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "data");
-    const fn = `${tableName.value}_${dateStr.value}.xlsx`;
+    const fn =
+      viewMode.value === "series"
+        ? `${tableName.value}_${codeStr.value || "series"}.xlsx`
+        : `${tableName.value}_${dateStr.value}.xlsx`;
     XLSX.writeFile(wb, fn);
     ElMessage.success(`已导出 ${allPages.length.toLocaleString()} 条`);
   } catch {
@@ -444,7 +515,14 @@ async function exportExcel() {
   }
 }
 
-const pageTitle = computed(() => meta.value?.name || "数据表");
+const pageTitle = computed(() =>
+  props.embedded ? "标准日线" : meta.value?.name || "数据表"
+);
+const pageSubtitle = computed(() =>
+  props.embedded
+    ? "回测读 cn_stock_daily_bar；按交易日横截面或按股票代码查历史序列"
+    : "日期切换后自动加载；点击列标题按全表排序（非仅当前页）；点击代码打开东方财富，⌘/Ctrl+点击进指标页。"
+);
 const rowCountLabel = computed(() => {
   if (!totalRows.value && !rows.value.length) return "";
   const total = totalRows.value || rows.value.length;
@@ -465,10 +543,7 @@ const loadHint = computed(() => {
 </script>
 
 <template>
-  <PageShell
-    :title="pageTitle"
-    subtitle="日期切换后自动加载；点击列标题按全表排序（非仅当前页）；点击代码打开东方财富，⌘/Ctrl+点击进指标页。"
-  >
+  <component :is="props.embedded ? 'div' : PageShell" v-bind="props.embedded ? {} : { title: pageTitle, subtitle: pageSubtitle }">
     <UiStateError v-if="showMetaError" :message="metaError || '加载表信息失败'" />
     <div v-if="showMetaError" class="retry-row">
       <el-text v-if="tableName" type="info" size="small">
@@ -482,14 +557,58 @@ const loadHint = computed(() => {
     </template>
     <template v-else-if="meta">
       <div class="toolbar">
-        <span class="muted">日期</span>
-        <el-date-picker
-          v-model="dateStr"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="选择日期"
-          style="width: 160px; margin: 0 12px"
+        <el-segmented
+          v-if="hasViewModes"
+          v-model="viewMode"
+          :options="[
+            { label: '按交易日', value: 'cross_section' },
+            { label: '按股票代码', value: 'series' },
+          ]"
         />
+        <template v-if="viewMode === 'series'">
+          <span class="muted">代码</span>
+          <el-input
+            v-model="codeStr"
+            placeholder="600000"
+            style="width: 110px"
+            size="small"
+          />
+          <span class="muted">区间</span>
+          <el-date-picker
+            v-model="dateFromStr"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="起"
+            size="small"
+            style="width: 140px"
+          />
+          <el-date-picker
+            v-model="dateToStr"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="止"
+            size="small"
+            style="width: 140px"
+          />
+        </template>
+        <template v-else>
+          <span class="muted">日期</span>
+          <el-date-picker
+            v-model="dateStr"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="选择日期"
+            style="width: 160px; margin: 0 12px"
+          />
+        </template>
+        <template v-if="hasViewModes">
+          <span class="muted">复权</span>
+          <el-select v-model="adjustType" size="small" style="width: 96px">
+            <el-option label="raw" value="raw" />
+            <el-option label="qfq" value="qfq" />
+            <el-option label="hfq" value="hfq" />
+          </el-select>
+        </template>
         <el-button type="primary" @click="reloadData">刷新</el-button>
         <el-button :loading="exportLoading" @click="exportExcel">导出 Excel</el-button>
       </div>
@@ -534,7 +653,7 @@ const loadHint = computed(() => {
         </div>
       </template>
     </template>
-  </PageShell>
+  </component>
 </template>
 
 <style scoped>

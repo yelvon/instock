@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import time
+from threading import Lock
+from typing import Any, Dict, List, Optional, Tuple
 
 import instock.lib.database as mdb
 from instock.core.canonical.writer import TABLE_BAR, TABLE_CONTRIB, ensure_canonical_tables
@@ -25,15 +27,54 @@ def _rows_to_dicts(rows, columns: List[str]) -> List[Dict[str, Any]]:
     return out
 
 
-def get_canonical_summary() -> Dict[str, Any]:
+_SUMMARY_CACHE_TTL_SEC = 60
+_summary_cache_lock = Lock()
+_summary_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+
+def invalidate_canonical_summary_cache() -> None:
+    with _summary_cache_lock:
+        _summary_cache.clear()
+
+
+def _aggregate_core_stats() -> Dict[str, int]:
+    """单次表扫描汇总行数、股票数与质量分布（替代多次 COUNT/GROUP BY）。"""
+    row = (mdb.executeSqlFetch(
+        f"SELECT COUNT(*) AS total, COUNT(DISTINCT code) AS codes, "
+        f"SUM(quality_status = 'complete') AS complete, "
+        f"SUM(quality_status = 'partial') AS partial, "
+        f"SUM(quality_status = 'suspect') AS suspect "
+        f"FROM `{TABLE_BAR}`"
+    ) or [(0, 0, 0, 0, 0)])[0]
+    return {
+        "total_bars": int(row[0] or 0),
+        "codes": int(row[1] or 0),
+        "complete": int(row[2] or 0),
+        "partial": int(row[3] or 0),
+        "suspect": int(row[4] or 0),
+    }
+
+
+def _build_canonical_summary(*, light: bool) -> Dict[str, Any]:
     ensure_canonical_tables()
     if not mdb.checkTableIsExist(TABLE_BAR):
-        return {"ready": False, "total_bars": 0, "codes": 0, "suspect": 0, "partial": 0}
-    total = mdb.executeSqlCount(f"SELECT COUNT(*) FROM `{TABLE_BAR}`")
-    codes = mdb.executeSqlCount(f"SELECT COUNT(DISTINCT code) FROM `{TABLE_BAR}`")
-    by_status_raw = mdb.executeSqlFetch(
-        f"SELECT quality_status, COUNT(*) FROM `{TABLE_BAR}` GROUP BY quality_status"
-    )
+        return {
+            "ready": False,
+            "total_bars": 0,
+            "codes": 0,
+            "suspect": 0,
+            "partial": 0,
+            "complete": 0,
+            "bar_sync_sources": BAR_SYNC_SOURCES,
+        }
+    core = _aggregate_core_stats()
+    out: Dict[str, Any] = {
+        "ready": True,
+        "bar_sync_sources": BAR_SYNC_SOURCES,
+        **core,
+    }
+    if light:
+        return out
     by_source_raw = mdb.executeSqlFetch(
         f"SELECT primary_source, COUNT(*) FROM `{TABLE_BAR}` "
         "WHERE primary_source IS NOT NULL GROUP BY primary_source ORDER BY 2 DESC LIMIT 20"
@@ -45,21 +86,25 @@ def get_canonical_summary() -> Dict[str, Any]:
             "WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
             "GROUP BY source_provider, merge_action ORDER BY 3 DESC LIMIT 50"
         ) or []
-    by_status = _rows_to_dicts(by_status_raw, ["quality_status", "c"])
-    status_map = {r["quality_status"]: int(r["c"]) for r in by_status if r.get("quality_status")}
-    by_source = _rows_to_dicts(by_source_raw, ["primary_source", "c"])
-    recent = _rows_to_dicts(recent_raw, ["source_provider", "merge_action", "c"])
-    return {
-        "ready": True,
-        "total_bars": total,
-        "codes": codes,
-        "suspect": status_map.get("suspect", 0),
-        "partial": status_map.get("partial", 0),
-        "complete": status_map.get("complete", 0),
-        "by_primary_source": by_source,
-        "recent_contributions": recent,
-        "bar_sync_sources": BAR_SYNC_SOURCES,
-    }
+    out["by_primary_source"] = _rows_to_dicts(by_source_raw, ["primary_source", "c"])
+    out["recent_contributions"] = _rows_to_dicts(
+        recent_raw, ["source_provider", "merge_action", "c"]
+    )
+    return out
+
+
+def get_canonical_summary(*, light: bool = False, refresh: bool = False) -> Dict[str, Any]:
+    cache_key = "light" if light else "full"
+    now = time.time()
+    if not refresh:
+        with _summary_cache_lock:
+            hit = _summary_cache.get(cache_key)
+            if hit and now - hit[0] < _SUMMARY_CACHE_TTL_SEC:
+                return dict(hit[1])
+    data = _build_canonical_summary(light=light)
+    with _summary_cache_lock:
+        _summary_cache[cache_key] = (now, data)
+    return data
 
 
 def get_code_coverage(code: str, adjust_type: str = "raw") -> Dict[str, Any]:

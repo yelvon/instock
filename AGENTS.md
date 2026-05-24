@@ -27,7 +27,8 @@
 | 按源拉取 | `instock/core/canonical/source_fetch.py`、`instock/job/sync_bars_source_job.py` |
 | Provider 注册 | `instock/core/data/registry.yaml` + `providers/`（含 `mootdx_local`、`akshare`、`tushare` 等） |
 | 治理 API | `/instock/api/sync/canonical`、`data_sources_service.py` |
-| 前端 | 任务中心 `JobCenterView.vue`（tab **通达信本地**）、`MootdxLocalPanel.vue`；数据同步 `SyncView.vue` |
+| 前端 | **回测数据管理** `/backtest-data`（概览/标准日线/补数/缺口）；任务中心 `MootdxLocalPanel`；回测 `/backtest` |
+| 回测严格检查 | `profile=backtest` 时查 `canonical_daily_bar`，不默认要求 `cn_stock_spot` |
 
 **旧路径仍存**：`instock/cache/hist/` pickle；新补数作业应写 `cn_stock_daily_bar`，不要假设只写 cache。
 
@@ -156,7 +157,9 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 2026-05-21 | 新增 `AGENTS.md` + `.cursor/rules/instock-context.mdc`：助手先读、重大变更自维护 |
 | 2026-05-24 | 通达信本地补数：Parallels 挂载 `/tdx` 并发读 `.day` 易 `Errno 5 EIO`（`INSTOCK_MOOTDX_LOCAL_WORKERS=1`）；mootdx 归一化须把 index `date` 落列否则写入 0 行 |
 | 2026-05-24 | Mac 本地盘 `~/tdx-local`；操作手册 [docs/通达信数据同步Mac.md](./docs/通达信数据同步Mac.md)；Mac 触发 `trigger_tdx_sync_from_mac.sh` |
+| 2026-05 | SPA **回测数据管理** `/backtest-data`；`cn_stock_daily_bar` 表页双模式；回测 `profile=backtest` 严格检查标准日线 |
+| 2026-05 | 宿主机运维：`scripts/host_ops_server.py` + 页面「Mac 宿主机运维」（同步 vipdoc / docker_dev_reload） |
 
 ---
 
-*最后更新：2026-05-21*
+*最后更新：2026-05*

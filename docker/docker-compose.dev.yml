@@ -8,5 +8,10 @@
 
 services:
   instock:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # 宿主机需运行: python3 scripts/host_ops_server.py
+      INSTOCK_HOST_OPS_URL: ${INSTOCK_HOST_OPS_URL:-http://host.docker.internal:19888}
     volumes:
       - ${INSTOCK_REPO_ROOT:?请设置环境变量 INSTOCK_REPO_ROOT 为仓库根绝对路径}:/data/InStock

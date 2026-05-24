@@ -58,7 +58,10 @@ class DataHealthApiHandler(webBase.BaseHandler, ABC):
                 end = dhs.parse_iso_date(de)
             if start > end:
                 raise ValueError("参数 from 不能晚于 to")
-            rep = dhs.build_report(start, end)
+            profile = (self.get_argument("profile", "") or "full").strip().lower()
+            codes_raw = (self.get_argument("codes", "") or "").strip()
+            codes = [c.strip() for c in codes_raw.split(",") if c.strip()] if codes_raw else None
+            rep = dhs.build_report(start, end, profile=profile, codes=codes)
             self.write(json.dumps(rep, ensure_ascii=False))
         except ValueError as e:
             self.set_status(400)
@@ -582,18 +585,28 @@ class EastmoneyProbeApiHandler(webBase.BaseHandler, ABC):
 
 
 class CanonicalGovernanceApiHandler(webBase.BaseHandler, ABC):
-    """标准行情库覆盖率、冲突与来源贡献。"""
+    """标准行情库覆盖率、冲突与来源贡献。Query: light=1 跳过来源/贡献聚合；refresh=1 跳过缓存。"""
 
     def get(self):
         import instock.web.canonical_governance_service as cgs
 
         self.set_header("Content-Type", "application/json;charset=UTF-8")
         code = (self.get_argument("code", "") or "").strip()
+        light = (self.get_argument("light", "") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        refresh = (self.get_argument("refresh", "") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         try:
             if code:
                 out = cgs.get_code_coverage(code)
             else:
-                out = cgs.get_canonical_summary()
+                out = cgs.get_canonical_summary(light=light, refresh=refresh)
             self.write(json.dumps({"ok": True, **out}, ensure_ascii=False))
         except Exception as e:
             self.set_status(500)
@@ -601,14 +614,28 @@ class CanonicalGovernanceApiHandler(webBase.BaseHandler, ABC):
 
 
 class DataSourcesApiHandler(webBase.BaseHandler, ABC):
-    """GET 多源 Registry 状态；POST body {provider_id, code?} 触发连通性检测。"""
+    """GET 多源 Registry 状态；POST body {provider_id, code?} 触发连通性检测。
+
+    Query: scope=panel 仅返回通达信本地 + 标准库概览（补数页用，秒级）；
+           refresh=1 跳过 60s 标准库统计缓存。
+    """
 
     def get(self):
         import instock.web.data_sources_service as dss
 
         self.set_header("Content-Type", "application/json;charset=UTF-8")
+        scope = (self.get_argument("scope", "") or "full").strip().lower()
+        refresh = (self.get_argument("refresh", "") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
         try:
-            self.write(json.dumps(dss.build_report(), ensure_ascii=False))
+            if scope in ("panel", "light"):
+                payload = dss.build_panel_report(refresh=refresh)
+            else:
+                payload = dss.build_report(refresh=refresh)
+            self.write(json.dumps(payload, ensure_ascii=False))
         except Exception as e:
             self.set_status(500)
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))

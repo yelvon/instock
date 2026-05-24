@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { Refresh, VideoPlay } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
+import HostOpsPanel from "@/features/host-ops/HostOpsPanel.vue";
 
 interface MootdxLocalDetail {
   INSTOCK_TDX_DIR?: string;
@@ -48,11 +49,12 @@ const ready = computed(
 
 const statusType = computed(() => (ready.value ? "success" : "warning"));
 
-async function loadStatus() {
+async function loadStatus(force = false) {
   loading.value = true;
   verifyMsg.value = "";
   try {
-    const r = await fetch("/instock/api/sync/data_sources");
+    const qs = force ? "?scope=panel&refresh=1" : "?scope=panel";
+    const r = await fetch(`/instock/api/sync/data_sources${qs}`);
     const j = await r.json();
     if (!j.ok) {
       verifyMsg.value = j.error || "加载失败";
@@ -84,7 +86,7 @@ async function verifyLocal() {
       verifyMsg.value = j.error || "检测失败";
       ElMessage.error(verifyMsg.value);
     }
-    await loadStatus();
+    await loadStatus(true);
   } catch (e) {
     verifyMsg.value = String(e);
     ElMessage.error(verifyMsg.value);
@@ -168,7 +170,7 @@ onMounted(() => void loadStatus());
           <template #header>
             <div class="card-head">
               <span>本地路径状态</span>
-              <el-button :icon="Refresh" size="small" :loading="loading" @click="loadStatus">
+              <el-button :icon="Refresh" size="small" :loading="loading" @click="loadStatus(true)">
                 刷新
               </el-button>
             </div>
@@ -291,6 +293,8 @@ onMounted(() => void loadStatus());
         <code>--limit 20</code>。
       </el-text>
     </el-card>
+
+    <HostOpsPanel />
   </div>
 </template>
 

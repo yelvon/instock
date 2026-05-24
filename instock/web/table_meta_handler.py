@@ -44,19 +44,21 @@ class TableMetaHandler(webBase.BaseHandler, ABC):
         except Exception:
             cols = wm.column_names if isinstance(wm.column_names, list) else []
 
-        self.write(
-            json.dumps(
-                {
-                    "ok": True,
-                    "table_name": wm.table_name,
-                    "name": wm.name,
-                    "is_realtime": bool(wm.is_realtime),
-                    "date_default": date_now_str,
-                    "column_names": cols,
-                },
-                ensure_ascii=False,
-            )
-        )
+        payload = {
+            "ok": True,
+            "table_name": wm.table_name,
+            "name": wm.name,
+            "is_realtime": bool(wm.is_realtime),
+            "date_default": date_now_str,
+            "column_names": cols,
+        }
+        if getattr(wm, "view_modes", None):
+            payload["view_modes"] = list(wm.view_modes)
+        if getattr(wm, "default_filters", None):
+            payload["default_filters"] = dict(wm.default_filters)
+        if getattr(wm, "requires_view_filter", False):
+            payload["requires_view_filter"] = True
+        self.write(json.dumps(payload, ensure_ascii=False))
 
 
 def _kline_fetch_timeout_sec() -> float:

@@ -131,3 +131,76 @@ def detect_table_date_gaps(
     missing = sorted(exp_set - actual)
     extra = sorted(actual - exp_set) if exp_set else []
     return missing, extra
+
+
+def _dates_in_canonical_bar_for_code(
+    code: str,
+    date_from: datetime.date,
+    date_to: datetime.date,
+    adjust_type: str = "raw",
+) -> Set[datetime.date]:
+    table = tbs.TABLE_CN_STOCK_DAILY_BAR["name"]
+    if not mdb.checkTableIsExist(table):
+        return set()
+    sql = (
+        f"SELECT DISTINCT `date` FROM `{table}` "
+        "WHERE `code` = %s AND `adjust_type` = %s "
+        "AND `date` >= %s AND `date` <= %s ORDER BY `date`"
+    )
+    rows = mdb.executeSqlFetch(
+        sql,
+        (str(code).zfill(6)[:6], adjust_type, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")),
+    )
+    if not rows:
+        return set()
+    out: Set[datetime.date] = set()
+    for r in rows:
+        v = r[0]
+        out.add(v.date() if isinstance(v, datetime.datetime) else v)
+    return out
+
+
+def detect_canonical_daily_bar_gaps(
+    date_from: datetime.date,
+    date_to: datetime.date,
+    *,
+    adjust_type: str = "raw",
+    codes=None,
+) -> Tuple[List[datetime.date], List[datetime.date], dict]:
+    """
+    标准日线缺日检测。
+    返回 (全市场缺日, extra, per_code_missing) 其中 per_code_missing 为 {code: [iso dates]}。
+    """
+    expected = _expected_trade_dates(date_from, date_to)
+    exp_set = set(expected)
+    table = tbs.TABLE_CN_STOCK_DAILY_BAR["name"]
+    per_code: dict = {}
+
+    norm_codes = [str(c).zfill(6)[:6] for c in (codes or []) if str(c).strip()]
+    if norm_codes:
+        union_missing: Set[datetime.date] = set()
+        for code in norm_codes:
+            actual = _dates_in_canonical_bar_for_code(code, date_from, date_to, adjust_type)
+            missing = sorted(exp_set - actual)
+            if missing:
+                per_code[code] = [d.isoformat() for d in missing]
+                union_missing.update(missing)
+        return sorted(union_missing), [], per_code
+
+    if not mdb.checkTableIsExist(table):
+        return list(expected), [], per_code
+
+    sql = (
+        f"SELECT DISTINCT `date` FROM `{table}` "
+        "WHERE `adjust_type` = %s AND `date` >= %s AND `date` <= %s ORDER BY `date`"
+    )
+    rows = mdb.executeSqlFetch(
+        sql, (adjust_type, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    )
+    actual: Set[datetime.date] = set()
+    for r in rows or []:
+        v = r[0]
+        actual.add(v.date() if isinstance(v, datetime.datetime) else v)
+    missing = sorted(exp_set - actual)
+    extra = sorted(actual - exp_set) if exp_set else []
+    return missing, extra, per_code

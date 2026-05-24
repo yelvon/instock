@@ -56,7 +56,12 @@ interface DataHealthReport {
     messages?: string[];
     domains?: Record<
       string,
-      { missing_trade_dates?: string[]; suggested_jobs?: string[]; table?: string }
+      {
+        missing_trade_dates?: string[];
+        code_missing?: Record<string, string[]>;
+        suggested_jobs?: string[];
+        table?: string;
+      }
     >;
   };
 }
@@ -183,7 +188,14 @@ async function runPrecheck() {
   precheckLoading.value = true;
   createGapReport.value = null;
   try {
-    const url = `/instock/api/sync/data_health?from=${encodeURIComponent(form.value.dateFrom)}&to=${encodeURIComponent(form.value.dateTo)}`;
+    const qs = new URLSearchParams({
+      from: form.value.dateFrom,
+      to: form.value.dateTo,
+      profile: "backtest",
+    });
+    const c = codes();
+    if (c.length) qs.set("codes", c.join(","));
+    const url = `/instock/api/sync/data_health?${qs.toString()}`;
     const r = await fetch(url);
     const j = await r.json();
     if (!j.ok) {
@@ -240,16 +252,23 @@ async function triggerKlineSync() {
   }
 }
 
-function goDataSources() {
-  void router.push({ path: "/jobs", query: { tab: "mootdx" } });
+function goBacktestData(tab: "ingest" | "gaps" | "bars" = "ingest") {
+  void router.push(`/backtest-data/${tab}`);
 }
 
-function goLineage() {
-  void router.push({ path: "/jobs", query: { tab: "lineage" } });
+function goDataSources() {
+  goBacktestData("ingest");
 }
 
 const precheckMessages = computed(() => precheck.value?.backtest_prerequisites?.messages || []);
-const precheckMissingSpot = computed(() => precheck.value?.missing_spot_trade_dates || []);
+const precheckMissingCanon = computed(() => {
+  const d = precheck.value?.backtest_prerequisites?.domains?.canonical_daily_bar;
+  return d?.missing_trade_dates || [];
+});
+const precheckCodeMissing = computed(() => {
+  const d = precheck.value?.backtest_prerequisites?.domains?.canonical_daily_bar;
+  return d?.code_missing || {};
+});
 
 async function cancelRun(id: string) {
   await cancelBacktestRun(id);
@@ -371,7 +390,7 @@ void loadRuns();
             <el-col :span="12"><el-form-item label="印花税"><el-input-number v-model="form.stampTaxRate" :min="0" :step="0.0001" /></el-form-item></el-col>
           </el-row>
           <el-form-item>
-            <el-checkbox v-model="form.requirePrerequisites">严格检查本地数据完整性</el-checkbox>
+            <el-checkbox v-model="form.requirePrerequisites">严格检查标准日线完整性</el-checkbox>
           </el-form-item>
           <el-form-item label="补数数据源">
             <el-select v-model="form.barDataSource" size="small">
@@ -409,11 +428,17 @@ void loadRuns();
             <template #default>
               <div class="gap-box">
                 <div v-if="precheckMessages.length">{{ precheckMessages.join("；") }}</div>
-                <div v-if="precheckMissingSpot.length">缺主快照交易日：{{ precheckMissingSpot.slice(0, 8).join(", ") }}{{ precheckMissingSpot.length > 8 ? "…" : "" }}</div>
-                <div class="muted">日线缺口优先在任务中心配置/验证 Tushare，再触发 K 线补数任务。</div>
+                <div v-if="precheckMissingCanon.length">
+                  标准日线缺交易日：{{ precheckMissingCanon.slice(0, 8).join(", ") }}{{ precheckMissingCanon.length > 8 ? "…" : "" }}
+                </div>
+                <div v-for="(dates, c) in precheckCodeMissing" :key="c" class="muted">
+                  {{ c }} 缺 {{ dates.length }} 日
+                </div>
+                <div class="muted">请到「回测数据管理」补通达信本地标准日线。</div>
                 <el-space wrap class="mt-mini">
-                  <el-button link type="primary" @click="goDataSources">通达信本地页</el-button>
-                  <el-button link type="primary" @click="goLineage">查看数据血缘</el-button>
+                  <el-button link type="primary" @click="goBacktestData('gaps')">缺口诊断</el-button>
+                  <el-button link type="primary" @click="goBacktestData('ingest')">去补数</el-button>
+                  <el-button link type="primary" @click="goBacktestData('bars')">浏览标准日线</el-button>
                 </el-space>
               </div>
             </template>
@@ -429,8 +454,8 @@ void loadRuns();
             <template #default>
               <pre class="mini-pre">{{ JSON.stringify(createGapReport, null, 2) }}</pre>
               <el-space wrap>
-                <el-button link type="primary" @click="goDataSources">去配置通达信本地</el-button>
-                <el-button link type="primary" @click="goLineage">去补齐数据</el-button>
+                <el-button link type="primary" @click="goBacktestData('ingest')">回测数据管理 · 补数</el-button>
+                <el-button link type="primary" @click="goBacktestData('gaps')">缺口诊断</el-button>
               </el-space>
             </template>
           </el-alert>

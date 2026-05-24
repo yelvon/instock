@@ -195,6 +195,21 @@ class StockFetchNormalizeTests(unittest.TestCase):
 
 
 class DataSourcesServiceTests(unittest.TestCase):
+    def test_build_panel_report_minimal_scope(self):
+        import instock.web.data_sources_service as dss
+
+        with patch.object(
+            dss, "_mootdx_local_detail", return_value={"provider_id": "mootdx_local"}
+        ), patch.object(
+            dss, "_canonical_block", return_value={"ready": True, "total_bars": 1}
+        ):
+            report = dss.build_panel_report()
+
+        self.assertEqual(report["scope"], "panel")
+        self.assertIn("mootdx_local", report)
+        self.assertIn("canonical", report)
+        self.assertNotIn("providers", report)
+
     def test_build_report_exposes_tushare_status(self):
         import instock.web.data_sources_service as dss
 

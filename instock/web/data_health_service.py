@@ -35,7 +35,13 @@ def _count_by_date(table: str, date_from: datetime.date, date_to: datetime.date)
     return {_norm_date_key(r[0]): int(r[1]) for r in rows}
 
 
-def build_report(date_from: datetime.date, date_to: datetime.date) -> Dict[str, Any]:
+def build_report(
+    date_from: datetime.date,
+    date_to: datetime.date,
+    *,
+    profile: str = "full",
+    codes: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     missing, extra = gaps.detect_stock_spot_gaps(date_from, date_to)
     cal_rows = tcal.table_row_count()
     expected = gaps.expected_trade_dates_in_range(date_from, date_to)
@@ -110,7 +116,9 @@ def build_report(date_from: datetime.date, date_to: datetime.date) -> Dict[str, 
             }
         )
 
-    bt_report = bdp.check_backtest_data(date_from, date_to)
+    bt_report = bdp.check_backtest_data(
+        date_from, date_to, profile=profile, codes=codes
+    )
     recent_batches: List[Dict[str, Any]] = []
     try:
         from instock.core.data.lineage import list_recent_batches

@@ -210,9 +210,12 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
             from instock.core.pipeline.backtest_data_prerequisites import check_backtest_data
 
             date_from, date_to = _date_range(payload)
+            profile = str(data_opts.get("profile") or "backtest")
             report = check_backtest_data(
                 pd.to_datetime(date_from).date(),
                 pd.to_datetime(date_to).date(),
+                profile=profile,
+                codes=_codes_from_payload(payload),
             ).to_dict()
             if not report.get("ok"):
                 raise BacktestDataGapError(report)

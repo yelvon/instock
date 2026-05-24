@@ -33,6 +33,7 @@ import instock.web.vue_spa_handler as vueSpaHandler
 import instock.web.nav_api_handler as navApiHandler
 import instock.web.table_meta_handler as tableMetaHandler
 import instock.web.backtest_handler as backtestHandler
+import instock.web.host_ops_handler as hostOpsHandler
 import tornado.web
 
 __author__ = 'myh '
@@ -81,6 +82,12 @@ class Application(tornado.web.Application):
             (r"/instock/api/backtest/runs", backtestHandler.BacktestRunsApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)/cancel", backtestHandler.BacktestRunCancelApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)", backtestHandler.BacktestRunDetailApiHandler),
+            (r"/instock/api/host_ops/status", hostOpsHandler.HostOpsStatusHandler),
+            (r"/instock/api/host_ops/tasks", hostOpsHandler.HostOpsTasksHandler),
+            (r"/instock/api/host_ops/runs", hostOpsHandler.HostOpsRunsHandler),
+            (r"/instock/api/host_ops/run_detail", hostOpsHandler.HostOpsRunDetailHandler),
+            (r"/instock/api/host_ops/trigger", hostOpsHandler.HostOpsTriggerHandler),
+            (r"/instock/api/host_ops/cancel", hostOpsHandler.HostOpsCancelHandler),
             (r"/instock/app/assets/(.*)", tornado.web.StaticFileHandler, {"path": _VUE_ASSETS}),
             (r"/instock/app/?(.*)", vueSpaHandler.VueIndexHandler),
         ]

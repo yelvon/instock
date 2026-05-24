@@ -18,6 +18,8 @@ class NavApiHandler(webBase.BaseHandler, ABC):
         groups = []
         seen = set()
         for item in sw.get_data_list():
+            if getattr(item, "hide_from_nav", False):
+                continue
             if item.type not in seen:
                 seen.add(item.type)
                 groups.append({"type": item.type, "ico": item.ico, "items": []})

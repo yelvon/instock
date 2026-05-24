@@ -7,6 +7,7 @@ import {
   DataLine,
   Histogram,
   Timer,
+  Coin,
 } from "@element-plus/icons-vue";
 
 const route = useRoute();
@@ -91,6 +92,10 @@ function onMenuSelect(index: string) {
     void router.push("/jobs");
     return;
   }
+  if (index === "/backtest-data") {
+    void router.push("/backtest-data");
+    return;
+  }
   if (index === "/backtest") {
     void router.push("/backtest");
     return;
@@ -131,9 +136,13 @@ function onMenuSelect(index: string) {
             <el-icon><Timer /></el-icon>
             <span>任务中心</span>
           </el-menu-item>
+          <el-menu-item index="/backtest-data">
+            <el-icon><Coin /></el-icon>
+            <span>回测数据管理</span>
+          </el-menu-item>
           <el-menu-item index="/backtest">
             <el-icon><Histogram /></el-icon>
-            <span>回测（规划）</span>
+            <span>回测</span>
           </el-menu-item>
 
           <el-sub-menu v-for="g in navGroups" :key="g.type" :index="'g:' + g.type">

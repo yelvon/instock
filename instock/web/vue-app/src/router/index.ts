@@ -8,6 +8,7 @@ import { queryClient } from "@/queryClient";
 function titleFromRoute(to: RouteLocationNormalized): string {
   const m = to.meta?.title as string | undefined;
   if (m) return m;
+  if (to.path.includes("backtest-data")) return "回测数据管理";
   if (to.path.includes("backtest")) return "回测";
   return "InStock";
 }
@@ -51,6 +52,42 @@ const router = createRouter({
           meta: { title: "股票指标" },
         },
         {
+          path: "backtest-data",
+          component: () => import("@/features/backtest-data/BacktestDataLayout.vue"),
+          meta: { title: "回测数据管理" },
+          redirect: "/backtest-data/overview",
+          children: [
+            {
+              path: "overview",
+              name: "backtest-data-overview",
+              component: () =>
+                import("@/features/backtest-data/BacktestDataOverviewView.vue"),
+              meta: { title: "概览" },
+            },
+            {
+              path: "bars",
+              name: "backtest-data-bars",
+              component: () =>
+                import("@/features/backtest-data/BacktestDataBarsView.vue"),
+              meta: { title: "标准日线" },
+            },
+            {
+              path: "ingest",
+              name: "backtest-data-ingest",
+              component: () =>
+                import("@/features/backtest-data/BacktestDataIngestView.vue"),
+              meta: { title: "补数" },
+            },
+            {
+              path: "gaps",
+              name: "backtest-data-gaps",
+              component: () =>
+                import("@/features/backtest-data/BacktestDataGapsView.vue"),
+              meta: { title: "缺口诊断" },
+            },
+          ],
+        },
+        {
           path: "backtest",
           component: () => import("@/features/backtest/BacktestLayout.vue"),
           meta: { title: "回测" },
@@ -59,7 +96,7 @@ const router = createRouter({
               path: "",
               name: "backtest-index",
               component: () => import("@/features/backtest/BacktestPlaceholderView.vue"),
-              meta: { title: "回测（规划中）" },
+              meta: { title: "回测" },
             },
           ],
         },

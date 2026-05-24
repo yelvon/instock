@@ -51,9 +51,19 @@ echo "    Mac 日志（robocopy 详细日志在 Windows 用户目录 sync_tdx_to
 echo ""
 
 # 必须用 --current-user，否则访问不到 Z: 共享盘
+# robocopy/中文 Windows 输出为 GBK；经 iconv 转成 UTF-8 供页面日志显示
+_run_prl() {
+  if command -v iconv >/dev/null 2>&1; then
+    prlctl exec "$VM_NAME" --current-user cmd.exe /c "call ${BAT_WIN}" 2>&1 \
+      | iconv -f GBK -t UTF-8//IGNORE
+  else
+    prlctl exec "$VM_NAME" --current-user cmd.exe /c "call ${BAT_WIN}" 2>&1
+  fi
+}
+
 set +e
-prlctl exec "$VM_NAME" --current-user cmd.exe /c "call ${BAT_WIN}"
-rc=$?
+_run_prl
+rc=${PIPESTATUS[0]}
 set -e
 
 echo ""

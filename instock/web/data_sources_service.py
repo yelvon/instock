@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from instock.core.data.profile import (
     effective_bar_mode,
@@ -78,7 +79,29 @@ def _chain_steps(domain_id: str, profile: str) -> List[Dict[str, Any]]:
     return steps
 
 
-def _mootdx_local_detail() -> Dict[str, Any]:
+_lday_count_cache: Dict[str, Tuple[float, int, int]] = {}
+_LDAY_COUNT_TTL_SEC = 300
+
+
+def _lday_file_counts(p: Path) -> Tuple[int, int]:
+    """缓存 vipdoc 下 .day 文件数，避免每次 API 遍历近万文件。"""
+    key = str(p.resolve())
+    now = time.time()
+    hit = _lday_count_cache.get(key)
+    if hit and now - hit[0] < _LDAY_COUNT_TTL_SEC:
+        return hit[1], hit[2]
+    sh_n, sz_n = 0, 0
+    sh_lday = p / "vipdoc" / "sh" / "lday"
+    sz_lday = p / "vipdoc" / "sz" / "lday"
+    if sh_lday.is_dir():
+        sh_n = sum(1 for x in sh_lday.iterdir() if x.suffix.lower() == ".day")
+    if sz_lday.is_dir():
+        sz_n = sum(1 for x in sz_lday.iterdir() if x.suffix.lower() == ".day")
+    _lday_count_cache[key] = (now, sh_n, sz_n)
+    return sh_n, sz_n
+
+
+def _mootdx_local_detail(*, light: bool = False) -> Dict[str, Any]:
     d = tdx_dir()
     detail: Dict[str, Any] = {
         "provider_id": "mootdx_local",
@@ -102,16 +125,7 @@ def _mootdx_local_detail() -> Dict[str, Any]:
     detail["lday_sz_count"] = 0
     if detail["vipdoc_exists"]:
         try:
-            sh_lday = p / "vipdoc" / "sh" / "lday"
-            sz_lday = p / "vipdoc" / "sz" / "lday"
-            if sh_lday.is_dir():
-                detail["lday_sh_count"] = sum(
-                    1 for x in sh_lday.iterdir() if x.suffix.lower() == ".day"
-                )
-            if sz_lday.is_dir():
-                detail["lday_sz_count"] = sum(
-                    1 for x in sz_lday.iterdir() if x.suffix.lower() == ".day"
-                )
+            detail["lday_sh_count"], detail["lday_sz_count"] = _lday_file_counts(p)
         except Exception:
             pass
     if not detail["dir_exists"]:
@@ -122,12 +136,15 @@ def _mootdx_local_detail() -> Dict[str, Any]:
 
         prov = Provider()
         detail["healthcheck"] = prov.healthcheck()
-        res = prov.fetch_bars("600000", "20240101", adjust="raw")
-        if res.ok and res.data is not None and not res.data.empty:
+        if light and detail["healthcheck"]:
             detail["sample_ok"] = True
-            detail["sample_rows"] = int(len(res.data))
         else:
-            detail["sample_error"] = res.error or "样本 K 线为空"
+            res = prov.fetch_bars("600000", "20240101", adjust="raw")
+            if res.ok and res.data is not None and not res.data.empty:
+                detail["sample_ok"] = True
+                detail["sample_rows"] = int(len(res.data))
+            else:
+                detail["sample_error"] = res.error or "样本 K 线为空"
     except Exception as e:
         detail["sample_error"] = str(e)
     prof = effective_data_profile()
@@ -258,7 +275,17 @@ def _akshare_detail() -> Dict[str, Any]:
     return detail
 
 
-def build_report() -> Dict[str, Any]:
+def build_panel_report(*, refresh: bool = False) -> Dict[str, Any]:
+    """补数页/通达信面板：仅本地路径 + 标准库概览，避免全量多源探测。"""
+    return {
+        "ok": True,
+        "scope": "panel",
+        "mootdx_local": _mootdx_local_detail(light=True),
+        "canonical": _canonical_block(light=True, refresh=refresh),
+    }
+
+
+def build_report(*, refresh: bool = False) -> Dict[str, Any]:
     profile = effective_data_profile()
     bar_mode = effective_bar_mode()
     use_reg = os.environ.get("INSTOCK_USE_DATA_REGISTRY", "0").strip() in (
@@ -313,14 +340,14 @@ def build_report() -> Dict[str, Any]:
         "bar_mode": bar_mode,
         "use_data_registry": use_reg,
         "registry_enabled_for_bars": use_reg or bar_mode == "raw",
-        "mootdx_local": _mootdx_local_detail(),
+        "mootdx_local": _mootdx_local_detail(light=False),
         "mootdx_online": _mootdx_online_detail(),
         "tushare": _tushare_detail(),
         "akshare": _akshare_detail(),
         "providers": providers,
         "domains": domains,
         "recent_bar_batches": bar_batches,
-        "canonical": _canonical_block(),
+        "canonical": _canonical_block(light=False, refresh=refresh),
         "management": {
             "docker_env": [
                 "INSTOCK_TDX_DIR=/tdx",
@@ -341,11 +368,11 @@ def build_report() -> Dict[str, Any]:
     }
 
 
-def _canonical_block() -> Dict[str, Any]:
+def _canonical_block(*, light: bool = False, refresh: bool = False) -> Dict[str, Any]:
     try:
         from instock.web.canonical_governance_service import get_canonical_summary
 
-        return get_canonical_summary()
+        return get_canonical_summary(light=light, refresh=refresh)
     except Exception as e:
         return {"ready": False, "error": str(e)}
 

@@ -7,7 +7,26 @@ __date__ = '2023/5/11 '
 
 
 class web_module_data:
-    def __init__(self, mode, type, ico, name, table_name, columns, column_names, primary_key, is_realtime, order_columns=None, order_by=None):
+    def __init__(
+        self,
+        mode,
+        type,
+        ico,
+        name,
+        table_name,
+        columns,
+        column_names,
+        primary_key,
+        is_realtime,
+        order_columns=None,
+        order_by=None,
+        *,
+        hide_from_nav=False,
+        view_modes=None,
+        default_filters=None,
+        order_by_series=None,
+        requires_view_filter=False,
+    ):
         self.mode = mode  # 模式，query，editor 查询和编辑模式
         self.type = type
         self.ico = ico
@@ -19,4 +38,9 @@ class web_module_data:
         self.is_realtime = is_realtime
         self.order_by = order_by
         self.order_columns = order_columns
+        self.hide_from_nav = bool(hide_from_nav)
+        self.view_modes = tuple(view_modes or ())
+        self.default_filters = dict(default_filters or {})
+        self.order_by_series = order_by_series or " `date` DESC"
+        self.requires_view_filter = bool(requires_view_filter)
         self.url = f"/instock/data?table_name={self.table_name}"
