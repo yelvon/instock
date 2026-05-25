@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from instock.core.backtest.engine import run_moving_average_backtest
+from instock.core.backtest.registry import ensure_registry, list_strategies, run_backtest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STORE_DIR = _REPO_ROOT / "instock" / "log" / "backtest_runs"
@@ -148,22 +148,25 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
         date_from, date_to = _date_range(payload)
         codes = _codes_from_payload(payload)
         strategy = payload.get("strategy") or {}
+        strategy_id = (strategy.get("id") or "moving_average_cross").strip()
         params = strategy.get("params") or {}
         broker = payload.get("broker") or {}
         risk = payload.get("risk") or {}
         data_opts = payload.get("data") or {}
         allow_sample = not bool(data_opts.get("requirePrerequisites", True))
         bars = {code: _load_bars(code, date_from, date_to, allow_sample=allow_sample) for code in codes}
-        result = run_moving_average_backtest(
+        ensure_registry()
+        result = run_backtest(
             run_id=run_id,
             title=str(payload.get("title") or "回测"),
+            strategy_id=strategy_id,
+            strategy_params=params if isinstance(params, dict) else {},
             bars_by_code=bars,
             initial_cash=float(broker.get("initialCash") or 1000000),
-            fast=int(params.get("fast") or 5),
-            slow=int(params.get("slow") or 20),
             commission_rate=float(broker.get("commissionRate") or 0.0003),
             min_commission=float(broker.get("minCommission") or 5),
             stamp_tax_rate=float(broker.get("stampTaxRate") or 0.001),
+            transfer_fee_rate=float(broker.get("transferFeeRate") or 0.00002),
             max_weight_per_symbol=float(risk.get("maxWeightPerSymbol") or 0.1),
         )
         with _LOCK:

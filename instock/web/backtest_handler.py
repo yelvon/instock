@@ -10,6 +10,13 @@ import instock.web.base as webBase
 import instock.web.backtest_service as svc
 
 
+class BacktestStrategiesApiHandler(webBase.BaseHandler, ABC):
+    def get(self):
+        svc.ensure_registry()
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        self.write(json.dumps({"ok": True, "strategies": svc.list_strategies()}, ensure_ascii=False))
+
+
 class BacktestRunsApiHandler(webBase.BaseHandler, ABC):
     def get(self):
         self.set_header("Content-Type", "application/json;charset=UTF-8")

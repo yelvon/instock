@@ -72,6 +72,20 @@ export interface BacktestCreatePayload {
   };
 }
 
+export interface BacktestStrategyItem {
+  id: string;
+  title: string;
+  description: string;
+  paramSchema: Record<string, number | string | boolean>;
+}
+
+export async function listBacktestStrategies(): Promise<BacktestStrategyItem[]> {
+  const res = await $api<{ ok: boolean; strategies: BacktestStrategyItem[] }>(
+    "/instock/api/backtest/strategies"
+  );
+  return res.strategies || [];
+}
+
 export async function listBacktestRuns(): Promise<BacktestRunListItem[]> {
   const res = await $api<{ ok: boolean; items: BacktestRunListItem[] }>(
     "/instock/api/backtest/runs"

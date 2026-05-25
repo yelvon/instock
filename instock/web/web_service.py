@@ -79,6 +79,7 @@ class Application(tornado.web.Application):
             (r"/instock/api/nav", navApiHandler.NavApiHandler),
             (r"/instock/api/table_meta", tableMetaHandler.TableMetaHandler),
             (r"/instock/api/kline_bundle", tableMetaHandler.KlineBundleApiHandler),
+            (r"/instock/api/backtest/strategies", backtestHandler.BacktestStrategiesApiHandler),
             (r"/instock/api/backtest/runs", backtestHandler.BacktestRunsApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)/cancel", backtestHandler.BacktestRunCancelApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)", backtestHandler.BacktestRunDetailApiHandler),

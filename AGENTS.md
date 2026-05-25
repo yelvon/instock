@@ -29,6 +29,9 @@
 | 治理 API | `/instock/api/sync/canonical`、`data_sources_service.py` |
 | 前端 | **回测数据管理** `/backtest-data`（概览/标准日线/补数/缺口）；任务中心 `MootdxLocalPanel`；回测 `/backtest` |
 | 回测严格检查 | `profile=backtest` 时查 `canonical_daily_bar`，不默认要求 `cn_stock_spot` |
+| **撮合回测引擎** | `instock/core/backtest/`：`Cerebro` + `SimBroker` + `StrategyRegistry`；API `POST/GET /instock/api/backtest/runs`、`GET /instock/api/backtest/strategies` |
+| 内置策略 id | `moving_average_cross`（默认）、`buy_and_hold`、`screening_bridge`（需完整依赖注册） |
+| 自定义策略 | `instock/core/backtest/strategies/plugins/` + `register()`；见 [docs/plan/自定义回测策略.md](./docs/plan/自定义回测策略.md) |
 
 **旧路径仍存**：`instock/cache/hist/` pickle；新补数作业应写 `cn_stock_daily_bar`，不要假设只写 cache。
 
@@ -43,12 +46,12 @@ instock/
 │   ├── canonical/            # 标准行情库
 │   ├── data/providers/       # mootdx_local, akshare, …
 │   ├── crawling/             # 东财等抓取
-│   └── backtest/             # 回测引擎
+│   └── backtest/             # Cerebro、SimBroker、registry、strategies/
 ├── instock/web/              # Tornado + vue-app + vue-dist
 ├── docker/                   # compose、Dockerfile、.env
-├── scripts/                  # docker_dev_reload.sh, verify_*.py
+├── scripts/                  # docker_dev_reload.sh, verify_*.py, check_backtest_data.py
 ├── migrations/               # SQL 迁移
-└── docs/                     # 中文文档（部署、通达信、mootdx）
+└── docs/                     # 中文文档；规划与实施方案统一在 docs/plan/
 ```
 
 ---
@@ -116,7 +119,7 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 1. **先读本文件**：动手改 `instock/` 前阅读本文（见 `.cursor/rules/instock-context.mdc`）。
 2. **自维护本文**：重大变更完成后更新相关章节 + §9，见下表。
 3. **最小改动**：只动与需求相关的文件；匹配现有命名与分层。
-4. **不要改** `docs/plan/` 里已批准的 plan 文件，除非用户明确要求。
+4. **不要改** `docs/plan/` 里已批准的规划文件，除非用户明确要求；新规划/方案一律写在 `docs/plan/` 并在 [docs/plan/索引.md](./docs/plan/索引.md) 登记，重大落地后同步更新 `AGENTS.md` §9。
 5. **不要提交** `.env`、`docker/.env`、token；用户未要求不要 `git commit`。
 6. **用户语言**：回复用 **中文**。
 7. **验证**：声称修复完成前，在 Docker 或本机跑相关脚本/接口（见 `scripts/verify_*.py`、`tests/test_canonical_quality.py`）。
@@ -128,6 +131,7 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 |----------|----------|
 | 新表 / 标准库逻辑 | §2、§8 链接 |
 | 新作业 / 预设 | §5 |
+| 回测引擎 / 新策略 id | §2 回测行、§3 `backtest/`、`docs/plan/` |
 | 环境变量 / Docker | §4、§6 |
 | 前端主流程 | §2 前端行、§8 |
 | 新踩坑 | §6 排障、§9 表格 |
@@ -143,7 +147,10 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 架构总览 | [docs/架构说明.md](./docs/架构说明.md) |
 | 作业列表 | [docs/作业说明.md](./docs/作业说明.md) |
 | 回测 API | [docs/回测-api契约.md](./docs/回测-api契约.md) |
-| 数据管线规划 | [docs/plan/数据管线.md](./docs/plan/数据管线.md) |
+| 规划索引 | [docs/plan/索引.md](./docs/plan/索引.md) |
+| Backtrader 式回测 | [docs/plan/回测Backtrader式架构.md](./docs/plan/回测Backtrader式架构.md)、[docs/plan/自定义回测策略.md](./docs/plan/自定义回测策略.md) |
+| 回测需求 | [docs/plan/回测.md](./docs/plan/回测.md) |
+| 数据管线 | [docs/plan/数据管线.md](./docs/plan/数据管线.md) |
 | Registry / 多源 | [docs/plan/数据域.md](./docs/plan/数据域.md) |
 
 ---
@@ -159,7 +166,9 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 2026-05-24 | Mac 本地盘 `~/tdx-local`；操作手册 [docs/通达信数据同步Mac.md](./docs/通达信数据同步Mac.md)；Mac 触发 `trigger_tdx_sync_from_mac.sh` |
 | 2026-05 | SPA **回测数据管理** `/backtest-data`；`cn_stock_daily_bar` 表页双模式；回测 `profile=backtest` 严格检查标准日线 |
 | 2026-05 | 宿主机运维：`scripts/host_ops_server.py` + 页面「Mac 宿主机运维」（同步 vipdoc / docker_dev_reload） |
+| 2026-05-25 | **Backtrader 式回测**：`core/backtest` 拆 `cerebro`/`broker`/`registry`；`backtest_service` 按 `strategy.id` 分发；`GET /instock/api/backtest/strategies`；插件目录 `strategies/plugins/` |
+| 2026-05-25 | 规划统一至 **`docs/plan/`**（含 Backtrader 回测实施方案）；移除仓库根 `plans/` |
 
 ---
 
-*最后更新：2026-05*
+*最后更新：2026-05-25*
