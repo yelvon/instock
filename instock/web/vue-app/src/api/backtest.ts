@@ -118,3 +118,35 @@ export async function deleteBacktestRun(id: string): Promise<{ ok: boolean; dele
     method: "DELETE",
   });
 }
+
+export interface BacktestKlineMark {
+  date: string;
+  side: "buy" | "sell";
+  price: number;
+  qty: number;
+  label: string;
+}
+
+export interface BacktestKlinePayload {
+  ok: boolean;
+  code: string;
+  adjustType: string;
+  dateFrom: string;
+  dateTo: string;
+  dates: string[];
+  ohlc: number[][];
+  volume: number[];
+  marks: BacktestKlineMark[];
+  empty?: boolean;
+  hint?: string;
+}
+
+export async function getBacktestRunKline(
+  runId: string,
+  code: string
+): Promise<BacktestKlinePayload> {
+  const q = new URLSearchParams({ code });
+  return $api<BacktestKlinePayload>(
+    `/instock/api/backtest/runs/${encodeURIComponent(runId)}/kline?${q.toString()}`
+  );
+}

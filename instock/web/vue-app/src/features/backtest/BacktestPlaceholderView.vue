@@ -12,16 +12,18 @@ import {
 import VChart from "vue-echarts";
 import type { ECBasicOption } from "echarts/types/dist/shared";
 import { ElMessage } from "element-plus";
-import PageShell from "@/components/ui/PageShell.vue";
+import BacktestKlineChart from "@/features/backtest/BacktestKlineChart.vue";
 import {
   cancelBacktestRun,
   createBacktestRun,
   deleteBacktestRun,
   getBacktestRun,
   listBacktestRuns,
+  listBacktestStrategies,
   type BacktestCreatePayload,
   type BacktestRunDetail,
   type BacktestRunListItem,
+  type BacktestStrategyItem,
 } from "@/api/backtest";
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent]);
@@ -69,13 +71,18 @@ interface DataHealthReport {
 const precheck = ref<DataHealthReport | null>(null);
 const createGapReport = ref<Record<string, unknown> | null>(null);
 
+const strategies = ref<BacktestStrategyItem[]>([]);
+const strategyId = ref("moving_average_cross");
+const strategyParams = ref<Record<string, number | string | boolean>>({
+  fast: 5,
+  slow: 20,
+});
+
 const form = ref({
   title: "双均线示例回测",
   dateFrom: "2024-01-01",
   dateTo: "2024-03-31",
   codesText: "600000",
-  fast: 5,
-  slow: 20,
   initialCash: 1000000,
   commissionRate: 0.0003,
   minCommission: 5,
@@ -84,6 +91,21 @@ const form = ref({
   requirePrerequisites: true,
   barDataSource: "mootdx",
 });
+
+const selectedStrategy = computed(() =>
+  strategies.value.find((s) => s.id === strategyId.value)
+);
+
+function applyStrategyDefaults(id: string) {
+  const s = strategies.value.find((x) => x.id === id);
+  if (!s) return;
+  strategyParams.value = { ...(s.paramSchema || {}) };
+  if (!form.value.title || form.value.title.endsWith("回测")) {
+    form.value.title = `${s.title}回测`;
+  }
+}
+
+watch(strategyId, (id) => applyStrategyDefaults(id));
 
 function pct(v: unknown): string {
   const n = Number(v);
@@ -112,8 +134,8 @@ function buildPayload(): BacktestCreatePayload {
     dateTo: form.value.dateTo,
     universe: { type: "codes", codes: codes() },
     strategy: {
-      id: "moving_average_cross",
-      params: { fast: form.value.fast, slow: form.value.slow },
+      id: strategyId.value,
+      params: { ...strategyParams.value },
     },
     broker: {
       initialCash: form.value.initialCash,
@@ -171,6 +193,7 @@ async function submitRun() {
     await loadRuns();
     await loadDetail(run.id);
     ElMessage.success("回测任务已创建");
+    document.getElementById("bt-results-anchor")?.scrollIntoView({ behavior: "smooth" });
   } catch (e: unknown) {
     const err = e as { data?: Record<string, unknown>; message?: string };
     if (err.data?.error === "BACKTEST_DATA_GAP") {
@@ -345,21 +368,77 @@ watch(hasRunning, (running) => {
   }
 });
 
+async function loadStrategies() {
+  try {
+    strategies.value = await listBacktestStrategies();
+    if (strategies.value.length && !strategies.value.some((s) => s.id === strategyId.value)) {
+      strategyId.value = strategies.value[0].id;
+    }
+    applyStrategyDefaults(strategyId.value);
+  } catch {
+    strategies.value = [];
+  }
+}
+
 void loadRuns();
+void loadStrategies();
 </script>
 
 <template>
-  <PageShell title="策略回测" subtitle="日线事件驱动回测：收益曲线、回撤、订单、成交、持仓与账户快照">
+  <div class="bt-page">
     <div class="bt-grid">
-      <el-card shadow="never" class="bt-panel">
+      <el-card shadow="never" class="bt-panel bt-panel-form">
         <template #header>
           <div class="panel-head">
-            <span>新建回测</span>
-            <el-button size="small" :loading="submitting" type="primary" @click="submitRun">运行</el-button>
+            <span class="panel-title">回测配置</span>
+            <el-space wrap>
+              <el-button size="small" link type="primary" @click="router.push('/backtest/guide')">
+                如何添加策略
+              </el-button>
+              <el-button size="small" :loading="submitting" type="primary" @click="submitRun">
+                运行回测
+              </el-button>
+            </el-space>
           </div>
         </template>
-        <el-form label-position="top" size="small">
-          <el-form-item label="名称">
+        <el-form label-position="top" size="small" class="bt-form">
+          <el-form-item label="策略">
+            <el-select
+              v-model="strategyId"
+              filterable
+              placeholder="选择策略"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="s in strategies"
+                :key="s.id"
+                :label="`${s.title} (${s.id})`"
+                :value="s.id"
+              />
+            </el-select>
+            <p v-if="selectedStrategy?.description" class="field-hint">
+              {{ selectedStrategy.description }}
+            </p>
+          </el-form-item>
+          <el-row v-if="Object.keys(strategyParams).length" :gutter="8" class="param-row">
+            <el-col
+              v-for="(val, key) in strategyParams"
+              :key="key"
+              :span="12"
+            >
+              <el-form-item :label="String(key)">
+                <el-input-number
+                  v-if="typeof val === 'number'"
+                  v-model="strategyParams[key] as number"
+                  :step="key.includes('rate') || key.includes('threshold') ? 0.01 : 1"
+                  style="width: 100%"
+                />
+                <el-input v-else v-model="strategyParams[key] as string" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-divider content-position="left">标的与区间</el-divider>
+          <el-form-item label="任务名称">
             <el-input v-model="form.title" />
           </el-form-item>
           <el-row :gutter="8">
@@ -377,10 +456,7 @@ void loadRuns();
           <el-form-item label="股票代码">
             <el-input v-model="form.codesText" type="textarea" :rows="2" placeholder="600000,000001" />
           </el-form-item>
-          <el-row :gutter="8">
-            <el-col :span="12"><el-form-item label="短均线"><el-input-number v-model="form.fast" :min="2" :max="120" /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="长均线"><el-input-number v-model="form.slow" :min="3" :max="250" /></el-form-item></el-col>
-          </el-row>
+          <el-divider content-position="left">资金与费用</el-divider>
           <el-row :gutter="8">
             <el-col :span="12"><el-form-item label="初始资金"><el-input-number v-model="form.initialCash" :min="10000" :step="10000" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="单票上限"><el-input-number v-model="form.maxWeightPerSymbol" :min="0.01" :max="1" :step="0.01" /></el-form-item></el-col>
@@ -389,17 +465,17 @@ void loadRuns();
             <el-col :span="12"><el-form-item label="佣金率"><el-input-number v-model="form.commissionRate" :min="0" :step="0.0001" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="印花税"><el-input-number v-model="form.stampTaxRate" :min="0" :step="0.0001" /></el-form-item></el-col>
           </el-row>
+          <el-divider content-position="left">数据检查</el-divider>
           <el-form-item>
             <el-checkbox v-model="form.requirePrerequisites">严格检查标准日线完整性</el-checkbox>
           </el-form-item>
-          <el-form-item label="补数数据源">
+          <el-form-item label="缺口时补数数据源">
             <el-select v-model="form.barDataSource" size="small">
               <el-option label="通达信本地 vipdoc（推荐）" value="mootdx" />
               <el-option label="mootdx 本地→在线" value="mootdx_online" />
               <el-option label="Tushare" value="tushare" />
               <el-option label="Akshare" value="akshare" />
               <el-option label="东财" value="eastmoney" />
-              <el-option label="仅东财" value="eastmoney" />
             </el-select>
           </el-form-item>
           <el-form-item>
@@ -462,14 +538,21 @@ void loadRuns();
         </el-form>
       </el-card>
 
-      <el-card shadow="never" class="bt-panel">
+      <el-card shadow="never" class="bt-panel bt-panel-runs">
         <template #header>
           <div class="panel-head">
-            <span>任务列表</span>
+            <span class="panel-title">历史任务</span>
             <el-button size="small" :loading="loading" @click="loadRuns">刷新</el-button>
           </div>
         </template>
-        <el-table :data="runs" size="small" height="430" highlight-current-row @row-click="(row: BacktestRunListItem) => (selectedId = row.id)">
+        <el-table
+          :data="runs"
+          size="small"
+          height="520"
+          highlight-current-row
+          class="runs-table"
+          @row-click="(row: BacktestRunListItem) => (selectedId = row.id)"
+        >
           <el-table-column prop="status" label="状态" width="86">
             <template #default="{ row }">
               <el-tag size="small" :type="row.status === 'success' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">{{ row.status }}</el-tag>
@@ -488,30 +571,62 @@ void loadRuns();
       </el-card>
     </div>
 
-    <el-card v-if="detail" shadow="never" class="mt">
+    <el-card v-if="detail" id="bt-results-anchor" shadow="never" class="bt-results-card">
       <template #header>
         <div class="panel-head">
-          <span>{{ detail.title }}</span>
-          <el-text type="info">{{ detail.dateFrom }} ~ {{ detail.dateTo }}</el-text>
+          <span class="panel-title">{{ detail.title }}</span>
+          <el-space wrap>
+            <el-tag size="small" :type="detail.status === 'success' ? 'success' : detail.status === 'failed' ? 'danger' : 'warning'">
+              {{ detail.status }}
+            </el-tag>
+            <el-text type="info">{{ detail.dateFrom }} ~ {{ detail.dateTo }}</el-text>
+            <el-text v-if="detail.params?.strategy" type="info" size="small">
+              策略 {{ detail.params.strategy }}
+            </el-text>
+          </el-space>
         </div>
       </template>
 
       <el-alert v-if="detail.status === 'failed'" type="error" :closable="false" :title="typeof detail.error === 'string' ? detail.error : detail.error?.message || '回测失败'" />
 
       <template v-if="detail.status !== 'failed'">
-      <el-row :gutter="12" class="metric-row">
-        <el-col :span="4"><el-statistic title="累计收益" :value="pct(detail.metrics?.totalReturn)" /></el-col>
-        <el-col :span="4"><el-statistic title="年化收益" :value="pct(detail.metrics?.annualReturn)" /></el-col>
-        <el-col :span="4"><el-statistic title="最大回撤" :value="pct(detail.metrics?.maxDrawdown)" /></el-col>
-        <el-col :span="4"><el-statistic title="夏普" :value="detail.metrics?.sharpe ?? '-'" /></el-col>
-        <el-col :span="4"><el-statistic title="换手率" :value="pct(detail.metrics?.turnover)" /></el-col>
-        <el-col :span="4"><el-statistic title="交易次数" :value="detail.metrics?.tradeCount ?? 0" /></el-col>
-      </el-row>
+      <div class="metric-grid">
+        <div class="metric-tile">
+          <span class="metric-label">累计收益</span>
+          <span class="metric-value">{{ pct(detail.metrics?.totalReturn) }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">年化收益</span>
+          <span class="metric-value">{{ pct(detail.metrics?.annualReturn) }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">最大回撤</span>
+          <span class="metric-value metric-warn">{{ pct(detail.metrics?.maxDrawdown) }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">夏普</span>
+          <span class="metric-value">{{ detail.metrics?.sharpe ?? "-" }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">换手率</span>
+          <span class="metric-value">{{ pct(detail.metrics?.turnover) }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">交易次数</span>
+          <span class="metric-value">{{ detail.metrics?.tradeCount ?? 0 }}</span>
+        </div>
+      </div>
 
       <el-row :gutter="12" class="mt">
         <el-col :span="14"><v-chart class="chart" :option="equityOption" autoresize /></el-col>
         <el-col :span="10"><v-chart class="chart" :option="drawdownOption" autoresize /></el-col>
       </el-row>
+
+      <BacktestKlineChart
+        v-if="detail.status === 'success'"
+        :run-id="detail.id"
+        :codes="detail.universe?.codes || codes()"
+      />
 
       <el-tabs class="mt">
         <el-tab-pane label="订单记录">
@@ -579,15 +694,21 @@ void loadRuns();
       </template>
     </el-card>
 
-    <el-empty v-else-if="!detailLoading" description="暂无回测结果，请先创建任务" />
-  </PageShell>
+    <el-empty v-else-if="!detailLoading && !runs.length" class="bt-empty" description="暂无回测任务，请在左侧配置后点击「运行回测」" />
+  </div>
 </template>
 
 <style scoped>
+.bt-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .bt-grid {
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
   gap: 12px;
+  align-items: start;
 }
 .panel-head {
   display: flex;
@@ -595,8 +716,62 @@ void loadRuns();
   justify-content: space-between;
   gap: 12px;
 }
+.panel-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #e8eef5;
+}
 .bt-panel {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.bt-panel-form {
   min-height: 520px;
+}
+.bt-panel-runs :deep(.el-card__body) {
+  padding-top: 8px;
+}
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
+}
+.param-row {
+  margin-bottom: 4px;
+}
+.bt-results-card {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.metric-tile {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--el-fill-color-darker);
+  border: 1px solid var(--el-border-color-extra-light);
+}
+.metric-label {
+  display: block;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 6px;
+}
+.metric-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #e8eef5;
+}
+.metric-warn {
+  color: #f0a020;
+}
+.bt-empty {
+  margin-top: 24px;
 }
 .mt {
   margin-top: 12px;

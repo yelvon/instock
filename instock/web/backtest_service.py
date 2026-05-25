@@ -294,6 +294,113 @@ def get_run(run_id: str) -> Optional[Dict[str, Any]]:
         return json.loads(json.dumps(row, ensure_ascii=False)) if row else None
 
 
+def get_run_kline_chart(run_id: str, code: str) -> Dict[str, Any]:
+    """回测区间内单股 K 线 + 成交买卖点（用于前端 candlestick）。"""
+    run = get_run(run_id)
+    if not run:
+        raise ValueError("回测任务不存在")
+    code = str(code).strip().zfill(6)[:6]
+    date_from = str(run.get("dateFrom") or "")
+    date_to = str(run.get("dateTo") or "")
+    if not date_from or not date_to:
+        raise ValueError("回测任务缺少日期区间")
+    params = run.get("params") or {}
+    adjust_type = str(params.get("priceMode") or "raw").strip() or "raw"
+    df = pd.DataFrame()
+    try:
+        from instock.core.canonical.reader import canonical_read_enabled, load_canonical_bars
+
+        if canonical_read_enabled():
+            df = load_canonical_bars(code, date_from, date_to, adjust_type=adjust_type)
+    except Exception:
+        df = pd.DataFrame()
+    if df is None or df.empty:
+        try:
+            df = _load_bars(code, date_from, date_to, allow_sample=False)
+        except ValueError:
+            try:
+                df = _load_bars(code, date_from, date_to, allow_sample=True)
+            except ValueError:
+                df = pd.DataFrame()
+    if df is None or df.empty:
+        return {
+            "ok": True,
+            "code": code,
+            "adjustType": adjust_type,
+            "dateFrom": date_from,
+            "dateTo": date_to,
+            "dates": [],
+            "ohlc": [],
+            "volume": [],
+            "marks": _marks_for_code(run, code),
+            "empty": True,
+            "hint": f"{code} 在 {date_from} ~ {date_to} 无标准日线，请先在回测数据管理补数",
+        }
+    dates: List[str] = []
+    ohlc: List[List[float]] = []
+    volume: List[float] = []
+    for _, row in df.iterrows():
+        d = str(row.get("date") or "")[:10]
+        if not d:
+            continue
+        o = _f(row.get("open"))
+        c = _f(row.get("close"))
+        h = _f(row.get("high"))
+        l = _f(row.get("low"))
+        if c <= 0:
+            continue
+        dates.append(d)
+        ohlc.append([round(o, 4), round(c, 4), round(l, 4), round(h, 4)])
+        volume.append(_f(row.get("volume")))
+    return {
+        "ok": True,
+        "code": code,
+        "adjustType": adjust_type,
+        "dateFrom": date_from,
+        "dateTo": date_to,
+        "dates": dates,
+        "ohlc": ohlc,
+        "volume": volume,
+        "marks": _marks_for_code(run, code),
+        "empty": False,
+    }
+
+
+def _f(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _marks_for_code(run: Dict[str, Any], code: str) -> List[Dict[str, Any]]:
+    marks: List[Dict[str, Any]] = []
+    for t in run.get("trades") or []:
+        if str(t.get("code") or "").zfill(6)[:6] != code:
+            continue
+        side = str(t.get("side") or "").lower()
+        if side not in ("buy", "sell"):
+            continue
+        dt = str(t.get("date") or "")[:10]
+        price = _f(t.get("price"))
+        if not dt or price <= 0:
+            continue
+        qty = int(_f(t.get("qty")))
+        marks.append(
+            {
+                "date": dt,
+                "side": side,
+                "price": round(price, 4),
+                "qty": qty,
+                "label": "买" if side == "buy" else "卖",
+            }
+        )
+    marks.sort(key=lambda x: x["date"])
+    return marks
+
+
 def cancel_run(run_id: str) -> Dict[str, Any]:
     _load_history()
     with _LOCK:

@@ -175,13 +175,6 @@ def _build_list_sql(
 
     if use_join:
         join_where = where_sql
-        if join_where:
-            join_where = (
-                join_where.replace("s.`date`", "s.`date`")
-                .replace("`date`", "s.`date`")
-                .replace("`code`", "s.`code`")
-                .replace("`adjust_type`", "s.`adjust_type`")
-            )
         sql = (
             f"SELECT s.*, a.`datetime` AS `cdatetime` "
             f"FROM `{table}` s "
@@ -207,12 +200,6 @@ def _build_count_sql(web_module_data, ctx: dict):
     use_join = _uses_attention_join(web_module_data)
     where_sql, params = _build_where_sql(web_module_data, ctx, use_join)
     if use_join:
-        if where_sql:
-            where_sql = (
-                where_sql.replace("`date`", "s.`date`")
-                .replace("`code`", "s.`code`")
-                .replace("`adjust_type`", "s.`adjust_type`")
-            )
         sql = f"SELECT COUNT(*) AS `cnt` FROM `{table}` s" + where_sql
     else:
         sql = f"SELECT COUNT(*) AS `cnt` FROM `{table}`" + where_sql

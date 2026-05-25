@@ -73,6 +73,24 @@ class BacktestRunDetailApiHandler(webBase.BaseHandler, ABC):
         self.write(json.dumps({"ok": True, **res}, ensure_ascii=False))
 
 
+class BacktestRunKlineApiHandler(webBase.BaseHandler, ABC):
+    """GET ?code=600000 返回回测区间 K 线与成交买卖点。"""
+
+    def get(self, run_id: str):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        code = (self.get_argument("code", "") or "").strip()
+        if not code:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 code"}, ensure_ascii=False))
+            return
+        try:
+            out = svc.get_run_kline_chart(run_id, code)
+            self.write(json.dumps(out, ensure_ascii=False))
+        except ValueError as e:
+            self.set_status(404 if "不存在" in str(e) else 400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
 class BacktestRunCancelApiHandler(webBase.BaseHandler, ABC):
     def post(self, run_id: str):
         self.set_header("Content-Type", "application/json;charset=UTF-8")

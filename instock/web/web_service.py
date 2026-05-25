@@ -81,6 +81,7 @@ class Application(tornado.web.Application):
             (r"/instock/api/kline_bundle", tableMetaHandler.KlineBundleApiHandler),
             (r"/instock/api/backtest/strategies", backtestHandler.BacktestStrategiesApiHandler),
             (r"/instock/api/backtest/runs", backtestHandler.BacktestRunsApiHandler),
+            (r"/instock/api/backtest/runs/([^/]+)/kline", backtestHandler.BacktestRunKlineApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)/cancel", backtestHandler.BacktestRunCancelApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)", backtestHandler.BacktestRunDetailApiHandler),
             (r"/instock/api/host_ops/status", hostOpsHandler.HostOpsStatusHandler),

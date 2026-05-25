@@ -9,7 +9,8 @@ function titleFromRoute(to: RouteLocationNormalized): string {
   const m = to.meta?.title as string | undefined;
   if (m) return m;
   if (to.path.includes("backtest-data")) return "回测数据管理";
-  if (to.path.includes("backtest")) return "回测";
+  if (to.path.includes("backtest/guide")) return "自定义策略";
+  if (to.path.includes("backtest")) return "策略回测";
   return "InStock";
 }
 
@@ -96,7 +97,13 @@ const router = createRouter({
               path: "",
               name: "backtest-index",
               component: () => import("@/features/backtest/BacktestPlaceholderView.vue"),
-              meta: { title: "回测" },
+              meta: { title: "运行回测" },
+            },
+            {
+              path: "guide",
+              name: "backtest-guide",
+              component: () => import("@/features/backtest/BacktestStrategyGuide.vue"),
+              meta: { title: "自定义策略" },
             },
           ],
         },
