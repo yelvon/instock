@@ -133,7 +133,8 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 新作业 / 预设 | §5 |
 | 回测引擎 / 新策略 id | §2 回测行、§3 `backtest/`、`docs/plan/` |
 | 环境变量 / Docker | §4、§6 |
-| 前端主流程 | §2 前端行、§8 |
+| 前端主流程 / 新路由 | §2 前端行、§8、[docs/架构与前端总览.md](./docs/架构与前端总览.md) |
+| 架构总览（分层/API/路由） | [docs/架构与前端总览.md](./docs/架构与前端总览.md) §对应章节 |
 | 新踩坑 | §6 排障、§9 表格 |
 | 任意重大功能 | §9「近期变更」+ 文首日期 |
 
@@ -144,7 +145,8 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 主题 | 文档 |
 |------|------|
 | **通达信 → Mac 同步** | [docs/通达信数据同步Mac.md](./docs/通达信数据同步Mac.md) |
-| 架构总览 | [docs/架构说明.md](./docs/架构说明.md) |
+| 架构与前端总览 | [docs/架构与前端总览.md](./docs/架构与前端总览.md)（重大变更须同步） |
+| 架构说明（经典数据流） | [docs/架构说明.md](./docs/架构说明.md) |
 | 作业列表 | [docs/作业说明.md](./docs/作业说明.md) |
 | 回测 API | [docs/回测-api契约.md](./docs/回测-api契约.md) |
 | 规划索引 | [docs/plan/索引.md](./docs/plan/索引.md) |
@@ -168,6 +170,7 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 2026-05 | 宿主机运维：`scripts/host_ops_server.py` + 页面「Mac 宿主机运维」（同步 vipdoc / docker_dev_reload） |
 | 2026-05-25 | **Backtrader 式回测**：`core/backtest` 拆 `cerebro`/`broker`/`registry`；`backtest_service` 按 `strategy.id` 分发；`GET /instock/api/backtest/strategies`；插件目录 `strategies/plugins/` |
 | 2026-05-25 | 规划统一至 **`docs/plan/`**（含 Backtrader 回测实施方案）；移除仓库根 `plans/` |
+| 2026-05-25 | 新增 [docs/架构与前端总览.md](./docs/架构与前端总览.md)：架构 + 前端一页总览，重大变更须同步 |
 
 ---
 
