@@ -190,6 +190,30 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "hint": "信号日后 N 日涨跌统计",
         "description": "对已有买卖信号与策略信号做「事后收益率」统计（非撮合级回测），写入表中带 RATE 扩展列。需先有信号日与历史收盘价数据。",
     },
+    {
+        "id": "ingest_tdx_gbbq_job",
+        "script": "ingest_tdx_gbbq_job.py",
+        "title": "同步通达信 gbbq（股本变迁）",
+        "hint": "T0002/hq_cache/gbbq → 除权事件表",
+        "mootdx_panel": True,
+        "description": "解析本地通达信 gbbq，写入 cn_stock_corporate_action。前复权派生前须先同步 gbbq 目录。",
+    },
+    {
+        "id": "derive_qfq_from_tdx_job",
+        "script": "derive_qfq_from_tdx_job.py",
+        "title": "派生前复权（标准库 qfq）",
+        "hint": "raw → cn_stock_daily_bar_qfq；首次请选 full",
+        "mootdx_panel": True,
+        "description": "由 cn_stock_daily_bar(raw) 与 gbbq 派生前复权，写入 cn_stock_daily_bar_qfq。参数示例：--mode full 或 --mode incremental。",
+    },
+    {
+        "id": "sync_tdx_local_pipeline_job",
+        "script": "sync_tdx_local_pipeline_job.py",
+        "title": "一键：通达信本地+前复权",
+        "hint": "universe → raw → gbbq → qfq",
+        "mootdx_panel": True,
+        "description": "顺序执行：证券主表(本地) → 标准库补数(通达信本地) → ingest gbbq → 派生 qfq。CLI：--qfq-mode full|incremental",
+    },
 ]
 
 
@@ -554,7 +578,16 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
     if not os.path.isfile(script_path):
         raise FileNotFoundError(f"找不到脚本: {script_path}")
     cmd = [sys.executable, script_path]
-    if job_id in ("init_job", "sync_trade_calendar_job", "sync_stock_universe_job"):
+    if job_id in (
+        "init_job",
+        "sync_trade_calendar_job",
+        "sync_stock_universe_job",
+        "ingest_tdx_gbbq_job",
+    ):
+        return cmd
+    if job_id == "derive_qfq_from_tdx_job":
+        return cmd
+    if job_id == "sync_tdx_local_pipeline_job":
         return cmd
     canon_src = (job.get("canonical_source") or "").strip()
     if canon_src:
@@ -742,7 +775,46 @@ def _worker(run_id: str) -> None:
                     )
             elif status == "success" and not r.get("error_message"):
                 r["error_message"] = None
+            if status == "success" and r.get("job_id") == "sync_bars_mootdx_local_job":
+                _maybe_auto_derive_qfq(r)
     _persist()
+
+
+def _maybe_auto_derive_qfq(run: Dict[str, Any]) -> None:
+    """raw 本地补数成功后，按配置自动接续 qfq 派生。"""
+    if os.environ.get("INSTOCK_AUTO_DERIVE_QFQ", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        return
+    try:
+        from instock.core.adjustment.corporate_action_store import qfq_table_has_rows
+        from instock.core.adjustment.derive import run_derive
+        from instock.core.adjustment.gbbq_reader import gbbq_factor_version
+        from instock.core.adjustment.corporate_action_store import get_stored_factor_version
+
+        mode = "incremental"
+        cur = gbbq_factor_version()
+        stored = get_stored_factor_version()
+        if cur and cur != stored:
+            from instock.core.adjustment.corporate_action_store import ingest_gbbq_to_db
+
+            ingest_gbbq_to_db()
+            mode = "full"
+        elif not qfq_table_has_rows():
+            run["qfq_auto_skip"] = "qfq 表为空，请手动运行 derive_qfq_from_tdx_job --mode full"
+            return
+
+        def _log(msg: str) -> None:
+            tail = (run.get("stdout_tail") or "") + f"\n[qfq-auto] {msg}\n"
+            run["stdout_tail"] = _truncate(tail)
+
+        r = run_derive(mode=mode, skip_ingest=True, log=_log)
+        run["qfq_auto_result"] = r
+    except Exception as e:
+        run["qfq_auto_error"] = str(e)[:500]
 
 
 def start_job(

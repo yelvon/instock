@@ -7,6 +7,8 @@ interface CanonicalSummary {
   ready?: boolean;
   total_bars?: number;
   codes?: number;
+  qfq_total_bars?: number;
+  qfq_codes?: number;
   complete?: number;
   partial?: number;
   suspect?: number;
@@ -44,7 +46,7 @@ onMounted(() => void load());
   <el-card v-loading="loading" shadow="never">
     <template #header>
       <div class="row-head">
-        <span>标准行情库 cn_stock_daily_bar</span>
+        <span>标准行情库（raw + qfq）</span>
         <el-button :icon="Refresh" size="small" @click="load">刷新</el-button>
       </div>
     </template>
@@ -56,11 +58,12 @@ onMounted(() => void load());
             {{ canonical.ready ? "已就绪" : "空" }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="K 线条数">
-          {{ (canonical.total_bars ?? 0).toLocaleString() }}
+        <el-descriptions-item label="raw K 线 / 股票数">
+          {{ (canonical.total_bars ?? 0).toLocaleString() }} / {{ canonical.codes ?? 0 }}
         </el-descriptions-item>
-        <el-descriptions-item label="股票数">
-          {{ canonical.codes ?? 0 }}
+        <el-descriptions-item label="qfq K 线 / 股票数">
+          {{ (canonical.qfq_total_bars ?? 0).toLocaleString() }} /
+          {{ canonical.qfq_codes ?? 0 }}
         </el-descriptions-item>
         <el-descriptions-item label="质量 complete / partial / suspect">
           {{ canonical.complete ?? 0 }} / {{ canonical.partial ?? 0 }} /
@@ -83,7 +86,15 @@ onMounted(() => void load());
         </el-button>
         <el-button @click="router.push('/backtest-data/ingest')">补数</el-button>
         <el-button @click="router.push('/backtest-data/gaps')">缺口诊断</el-button>
+        <el-button @click="router.push('/jobs')">任务中心（派生 qfq）</el-button>
       </el-space>
+      <el-alert
+        class="mt"
+        type="info"
+        :closable="false"
+        show-icon
+        title="首次前复权请在任务中心运行「派生前复权」--mode full，或「一键：通达信本地+前复权」。raw 补数成功后可自动增量派生（INSTOCK_AUTO_DERIVE_QFQ=1）。"
+      />
     </template>
   </el-card>
 </template>

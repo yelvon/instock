@@ -100,12 +100,18 @@ def check_backtest_data(
         miss, extra, per_code = gaps.detect_canonical_daily_bar_gaps(
             date_from, date_to, adjust_type=adjust_type, codes=codes
         )
+        from instock.core.canonical.bar_tables import resolve_bar_table
+
         dr = DomainGapReport(
             domain_id="canonical_daily_bar",
             missing_trade_dates=miss,
             extra_dates=extra,
-            table=tbs.TABLE_CN_STOCK_DAILY_BAR["name"],
-            suggested_jobs=["sync_bars_mootdx_local_job", "sync_bars_mootdx_job"],
+            table=resolve_bar_table(adjust_type),
+            suggested_jobs=(
+                ["sync_bars_mootdx_local_job", "derive_qfq_from_tdx_job"]
+                if (adjust_type or "raw") == "raw"
+                else ["ingest_tdx_gbbq_job", "derive_qfq_from_tdx_job --mode full"]
+            ),
             code_missing=per_code,
         )
         report.domains["canonical_daily_bar"] = dr

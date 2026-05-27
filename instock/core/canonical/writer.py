@@ -99,8 +99,12 @@ class CanonicalBarWriter:
 
     def __init__(self, provider_id: str, adjust_type: str = "raw"):
         ensure_canonical_tables()
+        if (adjust_type or "raw").strip().lower() not in ("raw", ""):
+            raise ValueError(
+                "CanonicalBarWriter 仅写入 raw 表；qfq 请使用 QfqBarWriter / derive_qfq_from_tdx_job"
+            )
         self.provider_id = provider_id
-        self.adjust_type = adjust_type
+        self.adjust_type = "raw"
         self.quality_score = q.provider_quality(provider_id)
 
     def write_dataframe(

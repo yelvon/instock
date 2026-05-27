@@ -73,6 +73,19 @@ def _build_canonical_summary(*, light: bool) -> Dict[str, Any]:
         "bar_sync_sources": BAR_SYNC_SOURCES,
         **core,
     }
+    from instock.core.canonical.bar_tables import TABLE_BAR_QFQ
+    from instock.core.adjustment.schema import ensure_qfq_tables
+
+    ensure_qfq_tables()
+    if mdb.checkTableIsExist(TABLE_BAR_QFQ):
+        qrow = (mdb.executeSqlFetch(
+            f"SELECT COUNT(*), COUNT(DISTINCT code) FROM `{TABLE_BAR_QFQ}`"
+        ) or [(0, 0)])[0]
+        out["qfq_total_bars"] = int(qrow[0] or 0)
+        out["qfq_codes"] = int(qrow[1] or 0)
+    else:
+        out["qfq_total_bars"] = 0
+        out["qfq_codes"] = 0
     if light:
         return out
     by_source_raw = mdb.executeSqlFetch(
@@ -108,13 +121,22 @@ def get_canonical_summary(*, light: bool = False, refresh: bool = False) -> Dict
 
 
 def get_code_coverage(code: str, adjust_type: str = "raw") -> Dict[str, Any]:
+    from instock.core.canonical.bar_tables import bar_table_has_adjust_column, resolve_bar_table
+
     ensure_canonical_tables()
     code = str(code).zfill(6)[:6]
-    rows = mdb.executeSqlFetch(
-        f"SELECT MIN(date), MAX(date), COUNT(*) FROM `{TABLE_BAR}` "
-        "WHERE code=%s AND adjust_type=%s",
-        (code, adjust_type),
-    )
+    table = resolve_bar_table(adjust_type)
+    if bar_table_has_adjust_column(adjust_type):
+        rows = mdb.executeSqlFetch(
+            f"SELECT MIN(date), MAX(date), COUNT(*) FROM `{table}` "
+            "WHERE code=%s AND adjust_type=%s",
+            (code, adjust_type),
+        )
+    else:
+        rows = mdb.executeSqlFetch(
+            f"SELECT MIN(date), MAX(date), COUNT(*) FROM `{table}` WHERE code=%s",
+            (code,),
+        )
     r = (rows or [(None, None, 0)])[0]
     contrib_raw = []
     if mdb.checkTableIsExist(TABLE_CONTRIB):

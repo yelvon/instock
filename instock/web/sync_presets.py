@@ -18,7 +18,7 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
     PRESET_MOOTDX_LOCAL: {
         "id": PRESET_MOOTDX_LOCAL,
         "title": "通达信本地（推荐）",
-        "summary": "K 线走 vipdoc → 标准库；证券主表本地扫描；快照仍可用东财/Baostock",
+        "summary": "K 线走 vipdoc → 标准库 raw；可选 gbbq 派生 qfq；证券主表本地扫描",
         "prefs": {
             "default_spot_data_source": "auto",
             "default_bar_data_source": "mootdx",

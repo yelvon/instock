@@ -40,6 +40,22 @@ def main() -> int:
     diff = (joined[0] - joined[1]).abs()
     print(f"bar_close: eastmoney vs {src} aligned={len(diff)} max_abs_diff={diff.max():.4f} mean={diff.mean():.4f}")
 
+    try:
+        from instock.core.canonical.reader import load_canonical_bars
+
+        lq = load_canonical_bars(args.code, args.from_date, adjust_type="qfq")
+        if not lq.empty:
+            b = md.data["close"].astype(float)
+            c = lq.set_index("date")["close"].astype(float)
+            j = b.align(c, join="inner")
+            d2 = (j[0] - j[1]).abs()
+            print(
+                f"bar_close: local_qfq vs {src} aligned={len(d2)} "
+                f"max_abs_diff={d2.max():.4f} mean={d2.mean():.4f}"
+            )
+    except Exception as ex:
+        print(f"local_qfq compare skip: {ex}")
+
     from instock.core.data.providers.tencent import tencent_quote
 
     tq = tencent_quote([args.code])

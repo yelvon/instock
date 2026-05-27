@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""回测与业务从标准日线表读取。"""
+"""回测与业务从标准日线表读取（raw / qfq 分表）。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ import pandas as pd
 import pymysql
 
 import instock.lib.database as mdb
-from instock.core.canonical.writer import TABLE_BAR, ensure_canonical_tables
+from instock.core.canonical.bar_tables import bar_table_has_adjust_column, resolve_bar_table
+from instock.core.canonical.writer import ensure_canonical_tables
+from instock.core.adjustment.schema import ensure_qfq_tables
 
 HIST_COLS = [
     "date",
@@ -42,8 +44,11 @@ def load_canonical_bars(
     date_end: Optional[str] = None,
     adjust_type: str = "raw",
 ) -> pd.DataFrame:
-    """从 cn_stock_daily_bar 读取，列与 CN_STOCK_HIST_DATA 对齐。"""
+    """从标准日线表读取，列与 CN_STOCK_HIST_DATA 对齐。"""
     ensure_canonical_tables()
+    if (adjust_type or "raw").strip().lower() in ("qfq", "01"):
+        ensure_qfq_tables()
+
     code = str(code).zfill(6)[:6]
     ds = str(date_start).replace("-", "")[:8]
     ds_fmt = f"{ds[:4]}-{ds[4:6]}-{ds[6:8]}" if len(ds) == 8 else date_start
@@ -52,11 +57,15 @@ def load_canonical_bars(
         de = str(date_end).replace("-", "")[:8]
         de_fmt = f"{de[:4]}-{de[4:6]}-{de[6:8]}" if len(de) == 8 else date_end
 
-    sql = (
-        f"SELECT {','.join(HIST_COLS)} FROM `{TABLE_BAR}` "
-        "WHERE code=%s AND adjust_type=%s AND date>=%s"
-    )
-    params: list = [code, adjust_type, ds_fmt]
+    table = resolve_bar_table(adjust_type)
+    sql = f"SELECT {','.join(HIST_COLS)} FROM `{table}` WHERE code=%s AND date>=%s"
+    params: list = [code, ds_fmt]
+    if bar_table_has_adjust_column(adjust_type):
+        sql = (
+            f"SELECT {','.join(HIST_COLS)} FROM `{table}` "
+            "WHERE code=%s AND adjust_type=%s AND date>=%s"
+        )
+        params = [code, (adjust_type or "raw").strip().lower(), ds_fmt]
     if de_fmt:
         sql += " AND date<=%s"
         params.append(de_fmt)

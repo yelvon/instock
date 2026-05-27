@@ -139,18 +139,26 @@ def _dates_in_canonical_bar_for_code(
     date_to: datetime.date,
     adjust_type: str = "raw",
 ) -> Set[datetime.date]:
-    table = tbs.TABLE_CN_STOCK_DAILY_BAR["name"]
+    from instock.core.canonical.bar_tables import bar_table_has_adjust_column, resolve_bar_table
+
+    table = resolve_bar_table(adjust_type)
     if not mdb.checkTableIsExist(table):
         return set()
-    sql = (
-        f"SELECT DISTINCT `date` FROM `{table}` "
-        "WHERE `code` = %s AND `adjust_type` = %s "
-        "AND `date` >= %s AND `date` <= %s ORDER BY `date`"
-    )
-    rows = mdb.executeSqlFetch(
-        sql,
-        (str(code).zfill(6)[:6], adjust_type, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")),
-    )
+    c = str(code).zfill(6)[:6]
+    if bar_table_has_adjust_column(adjust_type):
+        sql = (
+            f"SELECT DISTINCT `date` FROM `{table}` "
+            "WHERE `code` = %s AND `adjust_type` = %s "
+            "AND `date` >= %s AND `date` <= %s ORDER BY `date`"
+        )
+        params = (c, adjust_type, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    else:
+        sql = (
+            f"SELECT DISTINCT `date` FROM `{table}` "
+            "WHERE `code` = %s AND `date` >= %s AND `date` <= %s ORDER BY `date`"
+        )
+        params = (c, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    rows = mdb.executeSqlFetch(sql, params)
     if not rows:
         return set()
     out: Set[datetime.date] = set()
@@ -173,7 +181,9 @@ def detect_canonical_daily_bar_gaps(
     """
     expected = _expected_trade_dates(date_from, date_to)
     exp_set = set(expected)
-    table = tbs.TABLE_CN_STOCK_DAILY_BAR["name"]
+    from instock.core.canonical.bar_tables import bar_table_has_adjust_column, resolve_bar_table
+
+    table = resolve_bar_table(adjust_type)
     per_code: dict = {}
 
     norm_codes = [str(c).zfill(6)[:6] for c in (codes or []) if str(c).strip()]
@@ -190,13 +200,19 @@ def detect_canonical_daily_bar_gaps(
     if not mdb.checkTableIsExist(table):
         return list(expected), [], per_code
 
-    sql = (
-        f"SELECT DISTINCT `date` FROM `{table}` "
-        "WHERE `adjust_type` = %s AND `date` >= %s AND `date` <= %s ORDER BY `date`"
-    )
-    rows = mdb.executeSqlFetch(
-        sql, (adjust_type, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
-    )
+    if bar_table_has_adjust_column(adjust_type):
+        sql = (
+            f"SELECT DISTINCT `date` FROM `{table}` "
+            "WHERE `adjust_type` = %s AND `date` >= %s AND `date` <= %s ORDER BY `date`"
+        )
+        params = (adjust_type, date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    else:
+        sql = (
+            f"SELECT DISTINCT `date` FROM `{table}` "
+            "WHERE `date` >= %s AND `date` <= %s ORDER BY `date`"
+        )
+        params = (date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    rows = mdb.executeSqlFetch(sql, params)
     actual: Set[datetime.date] = set()
     for r in rows or []:
         v = r[0]

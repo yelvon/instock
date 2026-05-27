@@ -20,7 +20,9 @@
 
 | 概念 | 位置 / 表 |
 |------|-----------|
-| 标准日线 | 表 `cn_stock_daily_bar`，迁移 `migrations/003_canonical_daily_bar.sql` |
+| 标准日线 raw | 表 `cn_stock_daily_bar`（仅 raw），迁移 `003` |
+| 标准日线 qfq | 表 `cn_stock_daily_bar_qfq`（本地 gbbq 派生），迁移 `004` |
+| 前复权作业 | `ingest_tdx_gbbq_job`、`derive_qfq_from_tdx_job`、`sync_tdx_local_pipeline_job`；见 [docs/plan/通达信前复权.md](./docs/plan/通达信前复权.md) |
 | 来源贡献 | 表 `market_data_contribution` |
 | 合并写入 | `instock/core/canonical/writer.py`（`CanonicalBarWriter`） |
 | 回测读取 | `instock/core/canonical/reader.py`；开关 `INSTOCK_BACKTEST_USE_CANONICAL=1`（默认倾向开启） |
@@ -66,6 +68,7 @@ instock/
 | `INSTOCK_BAR_DATA_SOURCE` | 遍历拉 K 线时的源：`mootdx` / `tushare` / `auto` 等 |
 | `INSTOCK_USE_DATA_REGISTRY` | `1` 走 Registry 多源 |
 | `INSTOCK_BAR_MODE` | 常为 `raw`（未复权标准库） |
+| `INSTOCK_AUTO_DERIVE_QFQ` | `1`（默认）：`sync_bars_mootdx_local_job` 成功后自动 incremental 派生 qfq |
 | `INSTOCK_BACKTEST_USE_CANONICAL` | 回测读 `cn_stock_daily_bar` |
 | `TUSHARE_TOKEN` | Tushare；勿写入本文件，用 `docker/.env` 或 `config/tushare_token.txt` |
 
@@ -170,6 +173,7 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 | 2026-05 | 宿主机运维：`scripts/host_ops_server.py` + 页面「Mac 宿主机运维」（同步 vipdoc / docker_dev_reload） |
 | 2026-05-25 | **Backtrader 式回测**：`core/backtest` 拆 `cerebro`/`broker`/`registry`；`backtest_service` 按 `strategy.id` 分发；`GET /instock/api/backtest/strategies`；插件目录 `strategies/plugins/` |
 | 2026-05-25 | 规划统一至 **`docs/plan/`**（含 Backtrader 回测实施方案）；移除仓库根 `plans/` |
+| 2026-05-25 | **通达信本地前复权**：`cn_stock_daily_bar_qfq` 分表、gbbq ingest、derive job、`INSTOCK_AUTO_DERIVE_QFQ` |
 | 2026-05-25 | 新增 [docs/架构与前端总览.md](./docs/架构与前端总览.md)：架构 + 前端一页总览，重大变更须同步 |
 
 ---
