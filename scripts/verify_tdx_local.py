@@ -38,13 +38,12 @@ def main() -> int:
         return 1
     print(f"OK: provider=mootdx_local rows={len(res.data)} dir={d}")
     print(res.data.tail(3))
-    from instock.core.adjustment.gbbq_reader import find_gbbq_path, gbbq_factor_version
+    from instock.core.adjustment.gbbq_reader import diagnose_gbbq, gbbq_factor_version
 
-    gp = find_gbbq_path(d)
+    gp, msg = diagnose_gbbq(d)
+    print(msg)
     if gp:
-        print(f"OK: gbbq={gp} version={gbbq_factor_version(d)}")
-    else:
-        print("WARN: 未找到 gbbq，前复权需同步 T0002/hq_cache/gbbq")
+        print(f"    version={gbbq_factor_version(d)}")
     return 0
 
 

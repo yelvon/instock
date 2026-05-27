@@ -50,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
                     "service": "host_ops",
                     "repo": hor.repo_root(),
                     "inside_docker": hor.is_inside_docker(),
-                    "runner_version": 2,
+                    "runner_version": 3,
                 },
             )
             return

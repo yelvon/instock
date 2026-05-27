@@ -67,7 +67,7 @@ export interface BacktestCreatePayload {
   };
   data: {
     profile: string;
-    priceMode: string;
+    priceMode: "raw" | "qfq";
     requirePrerequisites: boolean;
   };
 }

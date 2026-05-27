@@ -28,8 +28,7 @@ const status = ref<HostOpsStatus | null>(null);
 const activeRun = ref<HostRun | null>(null);
 const logText = ref("");
 const triggering = ref(false);
-const reloadSkipNpm = ref(true);
-const reloadQuick = ref(false);
+const reloadRecreate = ref(false);
 const reloadPip = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -159,7 +158,7 @@ onUnmounted(() => stopPoll());
     >
       <template #title>
         {{ status.host_reachable ? "已连接宿主机运维服务" : "本机直接执行模式" }}
-        <span v-if="status.runner_version && status.runner_version < 2" class="warn-ver">
+        <span v-if="status.runner_version && status.runner_version < 3" class="warn-ver">
           （服务版本旧，请重启 host_ops_server）
         </span>
       </template>
@@ -179,17 +178,26 @@ onUnmounted(() => stopPoll());
         :disabled="!status?.ready"
         @click="
           triggerTask(
-            'docker_dev_reload',
-            {
-              skip_npm: reloadSkipNpm,
-              quick: reloadQuick,
-              pip: reloadPip,
-            },
-            '重建 Docker'
+            'docker_dev_reload_backend',
+            { recreate: reloadRecreate, pip: reloadPip },
+            '重启后端'
           )
         "
       >
-        应用挂载并重建容器
+        重启后端（快）
+      </el-button>
+      <el-button
+        :loading="triggering"
+        :disabled="!status?.ready"
+        @click="
+          triggerTask(
+            'docker_dev_reload_full',
+            { pip: reloadPip },
+            '全量重建'
+          )
+        "
+      >
+        全量重建（含 npm）
       </el-button>
       <el-button
         v-if="activeRun?.status === 'running'"
@@ -203,9 +211,10 @@ onUnmounted(() => stopPoll());
     </el-space>
 
     <el-form inline size="small" class="opts">
-      <el-checkbox v-model="reloadSkipNpm">跳过 npm 构建（改 Python/仅换 TDX 挂载时推荐）</el-checkbox>
-      <el-checkbox v-model="reloadQuick">仅 restart（--quick，不重建卷）</el-checkbox>
-      <el-checkbox v-model="reloadPip">重建后 pip 全量依赖（--pip）</el-checkbox>
+      <el-checkbox v-model="reloadRecreate">
+        后端模式：重建容器（改 docker/.env 或 TDX 挂载时用，否则仅 restart）
+      </el-checkbox>
+      <el-checkbox v-model="reloadPip">pip 全量依赖（--pip）</el-checkbox>
     </el-form>
 
     <div v-if="activeRun" class="run-meta">

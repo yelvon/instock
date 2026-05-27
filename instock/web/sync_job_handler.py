@@ -61,7 +61,10 @@ class DataHealthApiHandler(webBase.BaseHandler, ABC):
             profile = (self.get_argument("profile", "") or "full").strip().lower()
             codes_raw = (self.get_argument("codes", "") or "").strip()
             codes = [c.strip() for c in codes_raw.split(",") if c.strip()] if codes_raw else None
-            rep = dhs.build_report(start, end, profile=profile, codes=codes)
+            adjust_type = (self.get_argument("adjust_type", "") or "raw").strip().lower() or "raw"
+            rep = dhs.build_report(
+                start, end, profile=profile, codes=codes, adjust_type=adjust_type
+            )
             self.write(json.dumps(rep, ensure_ascii=False))
         except ValueError as e:
             self.set_status(400)
@@ -113,6 +116,7 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
                 date_start=body.get("date_start") or "",
                 date_end=body.get("date_end") or "",
                 date_list=body.get("date_list") or "",
+                qfq_mode=body.get("qfq_mode") or "incremental",
                 spot_data_source=(body.get("spot_data_source") or ""),
                 bar_data_source=(body.get("bar_data_source") or ""),
                 extra_env=extra_env,

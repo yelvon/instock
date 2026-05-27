@@ -41,7 +41,11 @@ def build_report(
     *,
     profile: str = "full",
     codes: Optional[List[str]] = None,
+    adjust_type: str = "raw",
 ) -> Dict[str, Any]:
+    adjust_type = (adjust_type or "raw").strip().lower() or "raw"
+    if adjust_type not in ("raw", "qfq"):
+        adjust_type = "raw"
     missing, extra = gaps.detect_stock_spot_gaps(date_from, date_to)
     cal_rows = tcal.table_row_count()
     expected = gaps.expected_trade_dates_in_range(date_from, date_to)
@@ -117,7 +121,7 @@ def build_report(
         )
 
     bt_report = bdp.check_backtest_data(
-        date_from, date_to, profile=profile, codes=codes
+        date_from, date_to, profile=profile, codes=codes, adjust_type=adjust_type
     )
     recent_batches: List[Dict[str, Any]] = []
     try:

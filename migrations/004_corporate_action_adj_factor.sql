@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `cn_stock_adj_factor` (
   COMMENT='日频前复权因子链';
 
 CREATE TABLE IF NOT EXISTS `cn_stock_qfq_watermark` (
-  `code` varchar(6) NOT NULL COMMENT '__global__ 表示全局 gbbq 版本',
+  `code` varchar(16) NOT NULL COMMENT '__global__ 表示全局 gbbq 版本',
   `last_raw_date` date DEFAULT NULL,
   `last_factor_version` varchar(64) DEFAULT NULL,
   `last_derived_at` datetime DEFAULT NULL,

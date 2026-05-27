@@ -122,7 +122,8 @@ def check_backtest_data(
                     f"标准日线 {len(per_code)} 只股票存在缺日（共缺 {sum(len(v) for v in per_code.values())} 条日×股）"
                 )
             else:
-                report.messages.append(f"cn_stock_daily_bar 缺 {len(miss)} 个交易日")
+                tbl = dr.table or "cn_stock_daily_bar"
+                report.messages.append(f"{tbl} 缺 {len(miss)} 个交易日")
 
     if "daily_spot_snapshot" in domains:
         miss, extra = gaps.detect_stock_spot_gaps(date_from, date_to)

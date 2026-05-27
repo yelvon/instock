@@ -36,6 +36,7 @@ interface RunRow {
   date_list?: string;
   date_start?: string;
   date_end?: string;
+  qfq_mode?: string;
   spot_data_source?: string;
   bar_data_source?: string;
   trigger_source?: string;
@@ -82,6 +83,7 @@ const dateMode = ref<"default" | "list" | "range">("default");
 const dateList = ref("");
 const dateStart = ref("");
 const dateEnd = ref("");
+const qfqMode = ref<"full" | "incremental">("incremental");
 const spotSource = ref("eastmoney");
 const barSource = ref("auto");
 const emPush2Host = ref("auto");
@@ -95,6 +97,18 @@ const CANONICAL_BAR_JOBS = new Set([
   "sync_bars_akshare_job",
   "sync_bars_eastmoney_job",
 ]);
+const QFQ_MODE_JOBS = new Set([
+  "derive_qfq_from_tdx_job",
+  "sync_tdx_local_pipeline_job",
+]);
+const NO_DATE_JOBS = new Set([
+  "init_job",
+  "sync_trade_calendar_job",
+  "sync_stock_universe_job",
+  "ingest_tdx_gbbq_job",
+  ...QFQ_MODE_JOBS,
+]);
+const showQfqMode = computed(() => QFQ_MODE_JOBS.has(jobId.value));
 const isKlineBarJob = computed(
   () => jobId.value === KLINE_BAR_JOB || CANONICAL_BAR_JOBS.has(jobId.value)
 );
@@ -207,6 +221,13 @@ function formatRunConditions(r: RunRow): string {
     r.job_id === "sync_stock_universe_job"
   ) {
     return prefix + "默认（初始化/日历）";
+  }
+  if (r.job_id === "ingest_tdx_gbbq_job") {
+    return prefix + "无日期参数";
+  }
+  if (QFQ_MODE_JOBS.has(r.job_id || "")) {
+    const m = (r.qfq_mode || "incremental").toLowerCase();
+    return prefix + (m === "full" ? "全量 full" : "增量 incremental");
   }
   const dm = (r.date_mode || "default").toLowerCase();
   let cond = "";
@@ -540,11 +561,7 @@ async function triggerRun() {
     }
   }
   let dm = dateMode.value;
-  if (
-    jobId.value === "init_job" ||
-    jobId.value === "sync_trade_calendar_job" ||
-    jobId.value === "sync_stock_universe_job"
-  ) {
+  if (NO_DATE_JOBS.has(jobId.value)) {
     dm = "default";
   }
   const payload: Record<string, string> = {
@@ -554,6 +571,9 @@ async function triggerRun() {
     date_end: "",
     date_list: "",
   };
+  if (showQfqMode.value) {
+    payload.qfq_mode = qfqMode.value;
+  }
   if (jobId.value === "basic_data_daily_job") {
     payload.spot_data_source = spotSource.value || "eastmoney";
   }
@@ -1352,15 +1372,21 @@ docker exec InStock printenv INSTOCK_TDX_DIR   # 应输出 /tdx</pre>
             仅「遍历拉 K 线」作业生效；失败不回退东财 K 线。
           </el-text>
         </el-form-item>
-        <el-form-item label="日期参数">
-          <el-radio-group
-            v-model="dateMode"
-            :disabled="
-              jobId === 'init_job' ||
-              jobId === 'sync_trade_calendar_job' ||
-              jobId === 'sync_stock_universe_job'
-            "
+        <el-form-item v-if="showQfqMode" label="派生范围">
+          <el-radio-group v-model="qfqMode">
+            <el-radio-button label="incremental">增量</el-radio-button>
+            <el-radio-button label="full">全量</el-radio-button>
+          </el-radio-group>
+          <el-text
+            size="small"
+            type="warning"
+            style="display: block; margin-top: 6px; max-width: 520px"
           >
+            首次派生、清空 qfq 表或刚修复 gbbq 后请选「全量」。
+          </el-text>
+        </el-form-item>
+        <el-form-item v-if="!NO_DATE_JOBS.has(jobId)" label="日期参数">
+          <el-radio-group v-model="dateMode">
             <el-radio-button label="default">默认</el-radio-button>
             <el-radio-button label="list" :disabled="isKlineBarJob">
               枚举

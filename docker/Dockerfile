@@ -52,6 +52,7 @@ trusted-host = mirrors.aliyun.com" > /etc/pip.conf && \
     pip install tornado && \
     pip install tushare && \
     pip install 'mootdx>=0.11.7' && \
+    pip install 'pytdx>=1.72' && \
     pip install 'akshare>=1.14.0' && \
     pip install 'PyYAML>=6.0' && \
     pip install mini-racer && \

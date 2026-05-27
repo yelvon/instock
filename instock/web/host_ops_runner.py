@@ -28,9 +28,20 @@ TASK_DEFS: Dict[str, Dict[str, Any]] = {
         "script": "scripts/trigger_tdx_sync_from_mac.sh",
         "cwd": _REPO_ROOT,
     },
+    "docker_dev_reload_backend": {
+        "title": "重启 InStock（仅后端，跳过 npm）",
+        "script": "scripts/docker_dev_reload_backend.sh",
+        "cwd": _REPO_ROOT,
+    },
+    "docker_dev_reload_full": {
+        "title": "重建 InStock（前端 npm + 容器）",
+        "script": "scripts/docker_dev_reload_full.sh",
+        "cwd": _REPO_ROOT,
+    },
+    # 兼容旧 task_id
     "docker_dev_reload": {
-        "title": "重建 InStock 容器（docker_dev_reload）",
-        "script": "scripts/docker_dev_reload.sh",
+        "title": "重建 InStock（全量）",
+        "script": "scripts/docker_dev_reload_full.sh",
         "cwd": _REPO_ROOT,
     },
 }
@@ -128,11 +139,14 @@ def _build_command(task_id: str, options: Optional[Dict[str, Any]]) -> List[str]
         raise FileNotFoundError(f"脚本不存在: {script}")
     cmd = ["/bin/bash", script]
     opts = options or {}
-    if task_id == "docker_dev_reload":
+    if task_id in ("docker_dev_reload", "docker_dev_reload_full"):
         if opts.get("quick"):
             cmd.append("--quick")
-        if opts.get("skip_npm"):
-            cmd.append("--skip-npm")
+        if opts.get("pip"):
+            cmd.append("--pip")
+    elif task_id == "docker_dev_reload_backend":
+        if opts.get("recreate"):
+            cmd.append("--recreate")
         if opts.get("pip"):
             cmd.append("--pip")
     return cmd
@@ -193,11 +207,22 @@ def cancel_run(run_id: str) -> bool:
     return True
 
 
-def _stream_encoding(task_id: str) -> str:
-    """通达信同步经 Windows/prlctl，日志多为 GBK。"""
-    if task_id == "tdx_sync":
-        return "gbk"
-    return "utf-8"
+def _decode_log_line(raw: bytes, task_id: str) -> str:
+    """tdx_sync：Mac 脚本 echo 为 UTF-8，Windows robocopy 为 GBK/CP936，按行分别解码。"""
+    if not raw:
+        return ""
+    if task_id != "tdx_sync":
+        return raw.decode("utf-8", errors="replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    for enc in ("gb18030", "gbk", "cp936"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 def _execute(run_id: str, task_id: str, cmd: List[str], cwd: str) -> None:
@@ -205,10 +230,11 @@ def _execute(run_id: str, task_id: str, cmd: List[str], cwd: str) -> None:
     code = -1
     proc = None
     last_persist = 0.0
-    enc = _stream_encoding(task_id)
+    use_binary = task_id == "tdx_sync"
     env = os.environ.copy()
     env.setdefault("LANG", "en_US.UTF-8")
     env.setdefault("LC_ALL", "en_US.UTF-8")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         proc = subprocess.Popen(
             cmd,
@@ -216,10 +242,10 @@ def _execute(run_id: str, task_id: str, cmd: List[str], cwd: str) -> None:
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding=enc,
+            text=not use_binary,
+            encoding=None if use_binary else "utf-8",
             errors="replace",
-            bufsize=1,
+            bufsize=0 if use_binary else 1,
         )
         with _LOCK:
             _ACTIVE[run_id] = proc
@@ -228,12 +254,22 @@ def _execute(run_id: str, task_id: str, cmd: List[str], cwd: str) -> None:
             with _LOCK:
                 if _RUNS.get(run_id, {}).get("status") == "cancelled":
                     break
-            try:
-                line = proc.stdout.readline()
-            except UnicodeDecodeError:
-                continue
-            if not line:
+            if use_binary:
+                raw = proc.stdout.readline()
+                if not raw:
+                    break
+                line = _decode_log_line(raw, task_id)
+            else:
+                try:
+                    line = proc.stdout.readline()
+                except UnicodeDecodeError:
+                    continue
+                if not line:
+                    break
+            if not line and not use_binary:
                 break
+            if not line.endswith("\n"):
+                line += "\n"
             merged += line
             if len(merged) > _MAX_TAIL:
                 merged = merged[-_MAX_TAIL:]

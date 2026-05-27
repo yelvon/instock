@@ -1,7 +1,7 @@
 @echo off
-REM SYNC_BAT_VERSION=4 vipdoc + gbbq, robocopy log to file only no TEE
+REM SYNC_BAT_VERSION=3 vipdoc + gbbq to Mac tdx-local via Z drive
 setlocal EnableDelayedExpansion
-echo [sync_tdx_to_mac.bat] version=4
+echo [sync_tdx_to_mac.bat] version=3
 
 set "TDX_SRC=C:\new_tdx"
 if exist "Z:\" (
@@ -26,12 +26,13 @@ mkdir "%MAC_HOME%tdx-local" 2>nul
 mkdir "%MAC_VIPDOC%" 2>nul
 
 echo [%date% %time%] sync start >> "%LOG%"
-echo [STEP] vipdoc %TDX_SRC%\vipdoc -^> %MAC_VIPDOC%
+echo SRC: %TDX_SRC%\vipdoc
+echo DST: %MAC_VIPDOC%
 
-robocopy "%TDX_SRC%\vipdoc" "%MAC_VIPDOC%" /E /XO /R:2 /W:3 /NP /NFL /NDL /LOG+:"%LOG%"
+robocopy "%TDX_SRC%\vipdoc" "%MAC_VIPDOC%" /E /XO /R:2 /W:3 /NP /LOG+:"%LOG%" /TEE
 
 set RC=%ERRORLEVEL%
-echo [OK] vipdoc robocopy exit=%RC% ^(0-7 success, see log %LOG%^)
+echo robocopy vipdoc exit: %RC%
 if %RC% GEQ 8 exit /b %RC%
 
 set "MAC_HQ=%MAC_HOME%tdx-local\T0002\hq_cache"
@@ -41,10 +42,8 @@ if exist "%WIN_HQ%" (
     mkdir "%MAC_HQ%" 2>nul
     for %%F in (gbbq gbbq.dat gbbq.map) do (
         if exist "%WIN_HQ%\%%F" (
-            echo [STEP] copy %%F %WIN_HQ% -^> %MAC_HQ%
-            robocopy "%WIN_HQ%" "%MAC_HQ%" %%F /XO /R:2 /W:3 /NP /NFL /NDL /LOG+:"%LOG%"
-            set "GBRC=!ERRORLEVEL!"
-            echo [OK] %%F robocopy exit=!GBRC!
+            robocopy "%WIN_HQ%" "%MAC_HQ%" %%F /XO /R:2 /W:3 /NP /LOG+:"%LOG%" /TEE
+            echo copied %%F exit: !ERRORLEVEL!
             set "GBBQ_OK=1"
         )
     )
@@ -52,9 +51,6 @@ if exist "%WIN_HQ%" (
 if "!GBBQ_OK!"=="0" (
     echo [WARN] no gbbq in %WIN_HQ%
     echo [WARN] run TDX online then download hq_cache gbbq before sync
-) else (
-    echo [OK] gbbq files synced to Mac tdx-local\T0002\hq_cache
 )
 
-echo [DONE] sync finished
 exit /b 0

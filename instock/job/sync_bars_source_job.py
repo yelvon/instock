@@ -24,6 +24,11 @@ cpath = os.path.abspath(os.path.join(cpath_current, os.pardir))
 sys.path.append(cpath)
 
 from instock.core.canonical.source_fetch import fetch_bars_single_source
+from instock.core.canonical.sync_plan import (
+    filter_bars_to_missing_dates,
+    plan_canonical_sync,
+    sync_skip_complete_enabled,
+)
 from instock.core.canonical.writer import CanonicalBarWriter
 from instock.core.mootdx_universe import count_universe, load_universe_codes
 
@@ -52,11 +57,35 @@ def _sync_one(
     date_to: str,
     also_pickle: bool,
 ) -> tuple[str, bool, str]:
-    _emit(f"[FETCH] {code} 请求 {source} …")
     try:
+        if sync_skip_complete_enabled():
+            plan = plan_canonical_sync(code, date_from, date_to, adjust_type="raw")
+            if plan.get("skip"):
+                return (
+                    code,
+                    True,
+                    f"skip 已覆盖 {plan.get('expected_days')} 个交易日 "
+                    f"({plan.get('date_from')}~{plan.get('date_to')})",
+                )
+            missing = plan.get("missing_dates") or []
+        else:
+            missing = []
+
+        _emit(
+            f"[FETCH] {code} 请求 {source} …"
+            + (f" 缺 {len(missing)} 日" if missing else "")
+        )
         df, pid, err = fetch_bars_single_source(source, code, date_from, date_to, adjust="raw")
         if df is None or df.empty:
             return code, False, f"empty provider={pid or source} {err or ''}"
+        if missing:
+            df = filter_bars_to_missing_dates(df, missing)
+            if df is None or df.empty:
+                return (
+                    code,
+                    True,
+                    f"skip 拉取后无待补行（缺日 {len(missing)}，或源未含该区间）",
+                )
         writer = CanonicalBarWriter(pid or source)
         stats = writer.write_dataframe(code, df)
         if stats.inserted + stats.filled == 0 and len(df) > 0:
@@ -144,6 +173,11 @@ def main():
         _emit(
             "[HINT] 本地通达信补数默认 workers=1（单连接写库）；"
             "若见 MySQL Errno 99 请停止任务后重建 InStock 容器再跑"
+        )
+    if sync_skip_complete_enabled():
+        _emit(
+            "[HINT] 已启用存量跳过（INSTOCK_SYNC_SKIP_COMPLETE=1）："
+            "区间内 raw 已完整则不再拉取/写入；有缺口仅 merge 缺失日"
         )
 
     ok_n = fail_n = 0

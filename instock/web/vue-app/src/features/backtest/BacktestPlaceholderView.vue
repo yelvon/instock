@@ -90,7 +90,10 @@ const form = ref({
   maxWeightPerSymbol: 0.1,
   requirePrerequisites: true,
   barDataSource: "mootdx",
+  priceMode: "raw" as "raw" | "qfq",
 });
+
+const priceModeLabel = (mode: unknown) => (mode === "qfq" ? "前复权" : "不复权");
 
 const selectedStrategy = computed(() =>
   strategies.value.find((s) => s.id === strategyId.value)
@@ -152,7 +155,7 @@ function buildPayload(): BacktestCreatePayload {
     },
     data: {
       profile: "backtest",
-      priceMode: "raw",
+      priceMode: form.value.priceMode,
       requirePrerequisites: form.value.requirePrerequisites,
     },
   };
@@ -215,6 +218,7 @@ async function runPrecheck() {
       from: form.value.dateFrom,
       to: form.value.dateTo,
       profile: "backtest",
+      adjust_type: form.value.priceMode,
     });
     const c = codes();
     if (c.length) qs.set("codes", c.join(","));
@@ -456,6 +460,15 @@ void loadStrategies();
           <el-form-item label="股票代码">
             <el-input v-model="form.codesText" type="textarea" :rows="2" placeholder="600000,000001" />
           </el-form-item>
+          <el-form-item label="价格口径">
+            <el-radio-group v-model="form.priceMode">
+              <el-radio label="raw">不复权（通达信本地 raw）</el-radio>
+              <el-radio label="qfq">前复权（标准库 qfq）</el-radio>
+            </el-radio-group>
+            <p v-if="form.priceMode === 'qfq'" class="field-hint">
+              需先在任务中心派生前复权；可在「回测数据管理 → 概览」查看 qfq 行数。
+            </p>
+          </el-form-item>
           <el-divider content-position="left">资金与费用</el-divider>
           <el-row :gutter="8">
             <el-col :span="12"><el-form-item label="初始资金"><el-input-number v-model="form.initialCash" :min="10000" :step="10000" /></el-form-item></el-col>
@@ -510,7 +523,13 @@ void loadStrategies();
                 <div v-for="(dates, c) in precheckCodeMissing" :key="c" class="muted">
                   {{ c }} 缺 {{ dates.length }} 日
                 </div>
-                <div class="muted">请到「回测数据管理」补通达信本地标准日线。</div>
+                <div class="muted">
+                  {{
+                    form.priceMode === "qfq"
+                      ? "请到「回测数据管理」补 raw 并派生 qfq，或任务中心运行「派生前复权」。"
+                      : "请到「回测数据管理」补通达信本地标准日线（raw）。"
+                  }}
+                </div>
                 <el-space wrap class="mt-mini">
                   <el-button link type="primary" @click="goBacktestData('gaps')">缺口诊断</el-button>
                   <el-button link type="primary" @click="goBacktestData('ingest')">去补数</el-button>
@@ -685,7 +704,10 @@ void loadStrategies();
             <el-descriptions-item label="run_id">{{ detail.id }}</el-descriptions-item>
             <el-descriptions-item label="状态">{{ detail.status }}</el-descriptions-item>
             <el-descriptions-item label="策略">{{ detail.params?.strategy }}</el-descriptions-item>
-            <el-descriptions-item label="价格口径">{{ detail.params?.priceMode }}</el-descriptions-item>
+            <el-descriptions-item label="价格口径">
+              {{ priceModeLabel(detail.params?.priceMode) }}
+              <span class="muted">({{ detail.params?.priceMode || "raw" }})</span>
+            </el-descriptions-item>
             <el-descriptions-item label="数据 profile">{{ detail.lineage?.profile }}</el-descriptions-item>
             <el-descriptions-item label="行情源">{{ detail.lineage?.barProvider }}</el-descriptions-item>
           </el-descriptions>

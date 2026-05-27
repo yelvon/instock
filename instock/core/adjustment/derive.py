@@ -21,6 +21,7 @@ from instock.core.adjustment.gbbq_reader import gbbq_factor_version
 from instock.core.adjustment.schema import ensure_qfq_tables
 from instock.core.canonical.qfq_writer import QfqBarWriter
 from instock.core.canonical.reader import load_canonical_bars
+from instock.core.canonical.sync_plan import plan_qfq_derive
 from instock.core.mootdx_universe import load_universe_codes
 
 _log = logging.getLogger(__name__)
@@ -106,15 +107,40 @@ def run_derive(
     if limit > 0:
         universe = universe[:limit]
 
+    skip_n = 0
     ok_n = 0
     fail_n = 0
+    fv = get_stored_factor_version() or gbbq_factor_version()
     for i, code in enumerate(universe, 1):
-        _log(log, f"[{i}/{len(universe)}] derive qfq {code}")
+        if mode == "incremental":
+            plan = plan_qfq_derive(
+                code,
+                date_from=date_from,
+                date_to=date_to or "",
+                factor_version=fv,
+            )
+            if plan.get("skip"):
+                skip_n += 1
+                _log(log, f"[{i}/{len(universe)}] skip qfq {code} ({plan.get('reason')})")
+                continue
+            miss = plan.get("missing_dates") or []
+            if miss:
+                _log(
+                    log,
+                    f"[{i}/{len(universe)}] derive qfq {code} 补 {len(miss)} 日 "
+                    f"({plan.get('date_from')}~{plan.get('date_to')})",
+                )
+            else:
+                _log(log, f"[{i}/{len(universe)}] derive qfq {code} ({plan.get('reason')})")
+        else:
+            _log(log, f"[{i}/{len(universe)}] derive qfq {code} [full]")
+
         try:
             r = derive_one_code(
                 code,
                 date_from=date_from if mode == "full" else date_from,
                 date_to=date_to or None,
+                factor_version=fv,
                 log=log,
             )
             if r.get("ok"):
@@ -126,4 +152,10 @@ def run_derive(
             fail_n += 1
             _log(log, f"  [FAIL] {code} {e}")
 
-    return {"ok": fail_n == 0, "success": ok_n, "failed": fail_n, "total": len(universe)}
+    return {
+        "ok": fail_n == 0,
+        "success": ok_n,
+        "skipped": skip_n,
+        "failed": fail_n,
+        "total": len(universe),
+    }

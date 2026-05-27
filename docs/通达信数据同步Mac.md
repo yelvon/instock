@@ -23,7 +23,7 @@
 |------|------|------|
 | Windows 通达信根目录 | `C:\new_tdx` | 含 `vipdoc\sh\lday\*.day`（路径按你安装调整） |
 | Mac 本地目标 | `~/tdx-local` | 即 `/Users/<你>/tdx-local` |
-| Mac 本地结构 | `~/tdx-local/vipdoc/sh/lday/`、`sz/lday/` | **不要**只拷 `vipdoc` 里的子目录而漏层级 |
+| Mac 本地结构 | `~/tdx-local/vipdoc/...`、`~/tdx-local/T0002/hq_cache/gbbq` | **前复权** 必须含 `gbbq`；`sync_tdx_to_mac.bat` 会一并拷贝 |
 | Docker 容器内 | `/tdx` | `INSTOCK_TDX_DIR=/tdx`，由 compose 挂载 `~/tdx-local` |
 | Windows 看 Mac 家目录 | `Z:\` | Parallels 共享文件夹（`prlctl --current-user` 下可用） |
 | 仓库脚本（Windows） | `Z:\stock\instock\scripts\windows\sync_tdx_to_mac.bat` | 与 Mac 仓库同步 |
@@ -53,7 +53,7 @@ INSTOCK_TDX_DIR_HOST=/Users/<你的用户名>/tdx-local
 └─────────────────┬───────────────────┘
                   ▼
 ┌─────────────────────────────────────┐
-│  同步 vipdoc → ~/tdx-local（见 §5）   │
+│  同步 vipdoc + gbbq → ~/tdx-local（见 §5） │
 └─────────────────┬───────────────────┘
                   ▼
 ┌─────────────────────────────────────┐
@@ -86,7 +86,8 @@ python3 scripts/host_ops_server.py
 
 | 按钮 | 等价命令 |
 |------|----------|
-| 同步 vipdoc → ~/tdx-local | `bash ./scripts/trigger_tdx_sync_from_mac.sh` |
+| 同步 vipdoc + gbbq → ~/tdx-local | `bash ./scripts/trigger_tdx_sync_from_mac.sh`（会先部署最新 bat 到 VM） |
+| 仅推送最新 bat 到虚拟机 | `bash ./scripts/push_sync_bat_to_vm.sh` |
 | 应用挂载并重建容器 | `./scripts/docker_dev_reload.sh`（可勾选跳过 npm / --quick） |
 
 日志在页面文本框内实时刷新。`docker-compose.dev.yml` 已配置 `INSTOCK_HOST_OPS_URL=http://host.docker.internal:19888`。

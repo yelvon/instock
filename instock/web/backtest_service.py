@@ -99,12 +99,25 @@ def _sample_bars(date_from: str, date_to: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _load_bars(code: str, date_from: str, date_to: str, allow_sample: bool) -> pd.DataFrame:
+def _normalize_price_mode(value: object) -> str:
+    mode = str(value or "raw").strip().lower() or "raw"
+    return mode if mode in ("raw", "qfq") else "raw"
+
+
+def _load_bars(
+    code: str,
+    date_from: str,
+    date_to: str,
+    allow_sample: bool,
+    *,
+    adjust_type: str = "raw",
+) -> pd.DataFrame:
+    adjust_type = _normalize_price_mode(adjust_type)
     try:
         from instock.core.canonical.reader import canonical_read_enabled, load_canonical_bars
 
         if canonical_read_enabled():
-            df = load_canonical_bars(code, date_from, date_to, adjust_type="raw")
+            df = load_canonical_bars(code, date_from, date_to, adjust_type=adjust_type)
             if df is not None and not df.empty:
                 return df
     except Exception:
@@ -154,7 +167,13 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
         risk = payload.get("risk") or {}
         data_opts = payload.get("data") or {}
         allow_sample = not bool(data_opts.get("requirePrerequisites", True))
-        bars = {code: _load_bars(code, date_from, date_to, allow_sample=allow_sample) for code in codes}
+        price_mode = _normalize_price_mode(data_opts.get("priceMode"))
+        bars = {
+            code: _load_bars(
+                code, date_from, date_to, allow_sample=allow_sample, adjust_type=price_mode
+            )
+            for code in codes
+        }
         ensure_registry()
         result = run_backtest(
             run_id=run_id,
@@ -169,6 +188,8 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
             transfer_fee_rate=float(broker.get("transferFeeRate") or 0.00002),
             max_weight_per_symbol=float(risk.get("maxWeightPerSymbol") or 0.1),
         )
+        if isinstance(result.get("params"), dict):
+            result["params"]["priceMode"] = price_mode
         with _LOCK:
             current = _RUNS.get(run_id)
             if current is None:
@@ -214,11 +235,13 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
 
             date_from, date_to = _date_range(payload)
             profile = str(data_opts.get("profile") or "backtest")
+            price_mode = _normalize_price_mode(data_opts.get("priceMode"))
             report = check_backtest_data(
                 pd.to_datetime(date_from).date(),
                 pd.to_datetime(date_to).date(),
                 profile=profile,
                 codes=_codes_from_payload(payload),
+                adjust_type=price_mode,
             ).to_dict()
             if not report.get("ok"):
                 raise BacktestDataGapError(report)

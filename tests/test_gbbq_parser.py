@@ -1,8 +1,19 @@
 # -*- coding: utf-8 -*-
-"""gbbq 路径与 events 映射（无真实 gbbq 文件时跳过）。"""
+"""gbbq 路径与日期解析。"""
 
-from instock.core.adjustment.gbbq_reader import find_gbbq_path, events_for_code
+import pandas as pd
+
+from instock.core.adjustment.gbbq_reader import find_gbbq_path, events_for_code, parse_gbbq_datetime
 from instock.core.data.profile import tdx_dir
+
+
+def test_parse_gbbq_datetime_int_yyyymmdd():
+    s = pd.Series([19900301, 20240604, 0, None])
+    out = parse_gbbq_datetime(s)
+    assert str(out.iloc[0].date()) == "1990-03-01"
+    assert str(out.iloc[1].date()) == "2024-06-04"
+    assert pd.isna(out.iloc[2])
+    assert pd.isna(out.iloc[3])
 
 
 def test_find_gbbq_path_optional():
@@ -13,7 +24,5 @@ def test_find_gbbq_path_optional():
 
 
 def test_events_for_code_empty():
-    import pandas as pd
-
     ev = events_for_code(pd.DataFrame(), "600000")
     assert ev.empty

@@ -6,7 +6,9 @@ from __future__ import annotations
 import pymysql
 
 import instock.lib.database as mdb
-from instock.core.canonical.bar_tables import TABLE_BAR_QFQ
+
+# 勿从 instock.core.canonical 导入：包初始化会拉 reader → 本模块，导致循环导入
+TABLE_BAR_QFQ = "cn_stock_daily_bar_qfq"
 
 _DDL = [
     """
@@ -40,7 +42,7 @@ _DDL = [
     """,
     """
     CREATE TABLE IF NOT EXISTS `cn_stock_qfq_watermark` (
-      `code` varchar(6) NOT NULL,
+      `code` varchar(16) NOT NULL,
       `last_raw_date` date DEFAULT NULL,
       `last_factor_version` varchar(64) DEFAULT NULL,
       `last_derived_at` datetime DEFAULT NULL,
@@ -77,9 +79,30 @@ _DDL = [
 ]
 
 
+def _upgrade_qfq_watermark_code_column(cur) -> None:
+    cur.execute(
+        """
+        SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'cn_stock_qfq_watermark'
+          AND COLUMN_NAME = 'code'
+        """
+    )
+    row = cur.fetchone()
+    if row and row[0] is not None and int(row[0]) < 16:
+        cur.execute(
+            """
+            ALTER TABLE `cn_stock_qfq_watermark`
+            MODIFY COLUMN `code` varchar(16) NOT NULL
+            COMMENT '__global__ 表示全局 gbbq 版本，其余为 6 位证券代码'
+            """
+        )
+
+
 def ensure_qfq_tables() -> None:
     with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
         with conn.cursor() as cur:
             for ddl in _DDL:
                 cur.execute(ddl)
+            _upgrade_qfq_watermark_code_column(cur)
         conn.commit()

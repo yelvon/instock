@@ -14,12 +14,12 @@ sys.path.append(cpath)
 
 def main() -> int:
     from instock.core.adjustment.corporate_action_store import ingest_gbbq_to_db
-    from instock.core.adjustment.gbbq_reader import find_gbbq_path
+    from instock.core.adjustment.gbbq_reader import diagnose_gbbq
 
-    path = find_gbbq_path()
-    print(f"gbbq: {path}", flush=True)
+    path, diag = diagnose_gbbq()
+    print(diag, flush=True)
     if not path:
-        print("[FAIL] 未找到 gbbq，请同步 T0002/hq_cache", flush=True)
+        print("[FAIL] 未找到 gbbq", flush=True)
         return 1
     r = ingest_gbbq_to_db()
     print(r, flush=True)

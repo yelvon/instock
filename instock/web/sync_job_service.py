@@ -216,6 +216,13 @@ JOB_ITEMS: List[Dict[str, str]] = [
     },
 ]
 
+QFQ_MODE_JOB_IDS = frozenset({"derive_qfq_from_tdx_job", "sync_tdx_local_pipeline_job"})
+
+
+def normalize_qfq_mode(mode: str, *, default: str = "incremental") -> str:
+    m = (mode or default).strip().lower()
+    return m if m in ("full", "incremental") else default
+
 
 def get_repo_root() -> str:
     return _REPO_ROOT
@@ -523,6 +530,7 @@ def retry_from_run(run_id: str) -> Dict[str, Any]:
         date_start=old.get("date_start") or "",
         date_end=old.get("date_end") or "",
         date_list=old.get("date_list") or "",
+        qfq_mode=old.get("qfq_mode") or "incremental",
         spot_data_source=old.get("spot_data_source") or "",
         bar_data_source=old.get("bar_data_source") or "",
         trigger_source="manual",
@@ -570,7 +578,14 @@ def _bar_data_source_env(bar_data_source: str) -> Dict[str, str]:
     return env
 
 
-def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, date_list: str) -> List[str]:
+def _build_command(
+    job_id: str,
+    date_mode: str,
+    date_start: str,
+    date_end: str,
+    date_list: str,
+    qfq_mode: str = "incremental",
+) -> List[str]:
     job = next((j for j in JOB_ITEMS if j["id"] == job_id), None)
     if not job:
         raise ValueError("未知 job_id")
@@ -586,8 +601,10 @@ def _build_command(job_id: str, date_mode: str, date_start: str, date_end: str, 
     ):
         return cmd
     if job_id == "derive_qfq_from_tdx_job":
+        cmd.extend(["--mode", normalize_qfq_mode(qfq_mode)])
         return cmd
     if job_id == "sync_tdx_local_pipeline_job":
+        cmd.extend(["--qfq-mode", normalize_qfq_mode(qfq_mode)])
         return cmd
     canon_src = (job.get("canonical_source") or "").strip()
     if canon_src:
@@ -823,6 +840,7 @@ def start_job(
     date_start: str = "",
     date_end: str = "",
     date_list: str = "",
+    qfq_mode: str = "incremental",
     spot_data_source: str = "",
     bar_data_source: str = "",
     trigger_source: str = "manual",
@@ -830,7 +848,8 @@ def start_job(
     schedule_title: str = "",
     extra_env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    cmd = _build_command(job_id, date_mode, date_start, date_end, date_list)
+    qfq_saved = normalize_qfq_mode(qfq_mode) if job_id in QFQ_MODE_JOB_IDS else ""
+    cmd = _build_command(job_id, date_mode, date_start, date_end, date_list, qfq_mode=qfq_saved or "incremental")
     run_id = str(uuid.uuid4())
     label = next((j["title"] for j in JOB_ITEMS if j["id"] == job_id), job_id)
     spot_saved = ""
@@ -856,6 +875,7 @@ def start_job(
         "date_start": date_start,
         "date_end": date_end,
         "date_list": date_list,
+        "qfq_mode": qfq_saved,
         "spot_data_source": spot_saved,
         "bar_data_source": bar_saved,
         "trigger_source": (trigger_source or "manual").strip() or "manual",

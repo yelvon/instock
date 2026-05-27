@@ -69,6 +69,7 @@ instock/
 | `INSTOCK_USE_DATA_REGISTRY` | `1` 走 Registry 多源 |
 | `INSTOCK_BAR_MODE` | 常为 `raw`（未复权标准库） |
 | `INSTOCK_AUTO_DERIVE_QFQ` | `1`（默认）：`sync_bars_mootdx_local_job` 成功后自动 incremental 派生 qfq |
+| `INSTOCK_SYNC_SKIP_COMPLETE` | `1`（默认）：标准库补数时区间内 raw 已完整则跳过该股；有缺口仅 merge 缺失日 |
 | `INSTOCK_BACKTEST_USE_CANONICAL` | 回测读 `cn_stock_daily_bar` |
 | `TUSHARE_TOKEN` | Tushare；勿写入本文件，用 `docker/.env` 或 `config/tushare_token.txt` |
 
@@ -100,7 +101,8 @@ docker exec -e INSTOCK_TDX_DIR=/tdx InStock python3 /data/InStock/scripts/verify
 - **一键重建**（默认 **删容器再 up**，不是单纯 restart）：
 
   ```bash
-  cd instock && ./scripts/docker_dev_reload.sh
+  cd instock && ./scripts/docker_dev_reload_backend.sh   # 改 Python（快）
+  cd instock && ./scripts/docker_dev_reload_full.sh      # 改 Vue 前端（慢）
   ```
 
   - `--quick`：仅 restart（**不会**应用新 env/卷）。

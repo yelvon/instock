@@ -14,7 +14,16 @@ import instock.lib.database as mdb
 from instock.core.adjustment.gbbq_reader import events_for_code, read_gbbq_dataframe
 from instock.core.adjustment.schema import ensure_qfq_tables
 
+# 全局 gbbq 版本水位（须 <= cn_stock_qfq_watermark.code 列宽，见 migrations/005）
 GLOBAL_WATERMARK_CODE = "__global__"
+
+
+def _norm_stock_code(raw: object) -> str:
+    c = str(raw or "").strip()
+    digits = "".join(ch for ch in c if ch.isdigit())
+    if not digits:
+        return ""
+    return digits.zfill(6)[-6:]
 
 
 def get_stored_factor_version() -> str:
@@ -32,12 +41,23 @@ def get_stored_factor_version() -> str:
 
 def set_global_factor_version(version: str) -> None:
     ensure_qfq_tables()
-    sql = """
-    INSERT INTO cn_stock_qfq_watermark (code, last_factor_version, last_derived_at)
-    VALUES (%s, %s, NOW())
-    ON DUPLICATE KEY UPDATE last_factor_version=VALUES(last_factor_version)
-    """
-    mdb.executeSql(sql, (GLOBAL_WATERMARK_CODE, version))
+    ver = str(version or "")[:64]
+    conn = pymysql.connect(**mdb.MYSQL_CONN_DBAPI)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cn_stock_qfq_watermark (code, last_factor_version, last_derived_at)
+                VALUES (%s, %s, NOW())
+                ON DUPLICATE KEY UPDATE
+                  last_factor_version=VALUES(last_factor_version),
+                  last_derived_at=NOW()
+                """,
+                (GLOBAL_WATERMARK_CODE, ver),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def ingest_gbbq_to_db(tdx_root: Optional[str] = None) -> Dict[str, Any]:
@@ -52,11 +72,21 @@ def ingest_gbbq_to_db(tdx_root: Optional[str] = None) -> Dict[str, Any]:
     sub = gbbq[gbbq["category"] == 1].copy()
     conn = pymysql.connect(**mdb.MYSQL_CONN_DBAPI)
     n = 0
+    skipped = 0
     try:
         with conn.cursor() as cur:
             for _, row in sub.iterrows():
                 ex = row.get("ex_date")
                 if pd.isna(ex):
+                    skipped += 1
+                    continue
+                ex_ts = pd.Timestamp(ex)
+                if ex_ts.year < 1990 or ex_ts.year > 2035:
+                    skipped += 1
+                    continue
+                code = _norm_stock_code(row.get("code"))
+                if not code:
+                    skipped += 1
                     continue
                 cur.execute(
                     """
@@ -70,7 +100,7 @@ def ingest_gbbq_to_db(tdx_root: Optional[str] = None) -> Dict[str, Any]:
                       factor_version=VALUES(factor_version), ingested_at=CURRENT_TIMESTAMP
                     """,
                     (
-                        str(row["code"]).zfill(6)[:6],
+                        code,
                         pd.Timestamp(ex).strftime("%Y-%m-%d"),
                         int(row.get("category") or 1),
                         float(row.get("hongli_panqianliutong") or 0),
@@ -82,10 +112,23 @@ def ingest_gbbq_to_db(tdx_root: Optional[str] = None) -> Dict[str, Any]:
                 )
                 n += 1
         conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise
     finally:
         conn.close()
-    set_global_factor_version(version)
-    return {"ok": True, "rows": n, "factor_version": version}
+    try:
+        set_global_factor_version(version)
+    except Exception as e:
+        return {
+            "ok": False,
+            "rows": n,
+            "skipped_codes": skipped,
+            "factor_version": version,
+            "error": f"watermark: {e}",
+            "hint": "run migrations/005_qfq_watermark_code_width.sql or re-run job after ensure_qfq_tables",
+        }
+    return {"ok": True, "rows": n, "skipped_codes": skipped, "factor_version": version}
 
 
 def load_xdxr_for_code(code: str) -> pd.DataFrame:
