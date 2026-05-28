@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
@@ -423,8 +423,10 @@ async function loadStrategies() {
   }
 }
 
-void loadRuns();
-void loadStrategies();
+onMounted(() => {
+  void loadRuns();
+  void loadStrategies();
+});
 </script>
 
 <template>

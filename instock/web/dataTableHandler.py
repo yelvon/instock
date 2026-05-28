@@ -122,7 +122,8 @@ def _build_where_sql(web_module_data, ctx: dict, use_join: bool) -> tuple:
 
     defaults = getattr(web_module_data, "default_filters", None) or {}
     for k, v in defaults.items():
-        if k in ("adjust_type",) and ctx.get("adjust_type"):
+        # adjust_type 仅 raw 表存在；qfq 分表时 ctx 已清空，不可套用 default_filters
+        if k == "adjust_type":
             continue
         col = _col_ref(use_join, k)
         clauses.append(f"{col} = %s")

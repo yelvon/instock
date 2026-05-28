@@ -12,6 +12,8 @@ interface CanonicalSummary {
   complete?: number;
   partial?: number;
   suspect?: number;
+  approximate?: boolean;
+  codes_is_universe?: boolean;
   by_primary_source?: { primary_source: string; c: number }[];
 }
 
@@ -20,11 +22,12 @@ const loading = ref(false);
 const canonical = ref<CanonicalSummary | null>(null);
 const error = ref("");
 
-async function load() {
+async function load(exact = false) {
   loading.value = true;
   error.value = "";
   try {
-    const r = await fetch("/instock/api/sync/canonical");
+    const qs = exact ? "?refresh=1" : "?light=1";
+    const r = await fetch(`/instock/api/sync/canonical${qs}`);
     const j = await r.json();
     if (!j.ok) {
       error.value = j.error || "加载失败";
@@ -47,11 +50,20 @@ onMounted(() => void load());
     <template #header>
       <div class="row-head">
         <span>标准行情库（raw + qfq）</span>
-        <el-button :icon="Refresh" size="small" @click="load">刷新</el-button>
+        <el-button :icon="Refresh" size="small" @click="load(false)">刷新</el-button>
+        <el-button size="small" @click="load(true)">精确统计</el-button>
       </div>
     </template>
     <el-alert v-if="error" type="error" :title="error" show-icon :closable="false" />
     <template v-else-if="canonical">
+      <el-alert
+        v-if="canonical.approximate"
+        type="info"
+        :closable="false"
+        show-icon
+        class="mb"
+        title="当前为快速估算（约），行数来自库表统计；股票数/质量可能来自上次精确统计。需要准确数字请点「精确统计」（约 15 秒）。"
+      />
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="状态">
           <el-tag :type="canonical.ready ? 'success' : 'info'" size="small">
@@ -59,10 +71,13 @@ onMounted(() => void load());
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="raw K 线 / 股票数">
-          {{ (canonical.total_bars ?? 0).toLocaleString() }} / {{ canonical.codes ?? 0 }}
+          {{ (canonical.total_bars ?? 0).toLocaleString() }}{{ canonical.approximate ? "（约）" : "" }}
+          /
+          {{ canonical.codes ?? 0 }}{{ canonical.codes_is_universe ? "（主表）" : "" }}
         </el-descriptions-item>
         <el-descriptions-item label="qfq K 线 / 股票数">
-          {{ (canonical.qfq_total_bars ?? 0).toLocaleString() }} /
+          {{ (canonical.qfq_total_bars ?? 0).toLocaleString() }}{{ canonical.approximate ? "（约）" : "" }}
+          /
           {{ canonical.qfq_codes ?? 0 }}
         </el-descriptions-item>
         <el-descriptions-item label="质量 complete / partial / suspect">
@@ -104,6 +119,9 @@ onMounted(() => void load());
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.mb {
+  margin-bottom: 12px;
 }
 .mt {
   margin-top: 16px;

@@ -383,9 +383,13 @@ def _marks_for_code(run: Dict[str, Any], code: str) -> List[Dict[str, Any]]:
         side = str(t.get("side") or "").lower()
         if side not in ("buy", "sell"):
             continue
-        dt = str(t.get("date") or "")[:10]
+        raw_dt = str(t.get("date") or "").replace("/", "-")[:10]
+        if len(raw_dt) >= 10:
+            dt = raw_dt[:10]
+        else:
+            dt = raw_dt
         price = _f(t.get("price"))
-        if not dt or price <= 0:
+        if not dt or len(dt) < 10 or price <= 0:
             continue
         qty = int(_f(t.get("qty")))
         marks.append(

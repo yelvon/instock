@@ -46,7 +46,7 @@ def derive_one_code(
     code = str(code).zfill(6)[:6]
     raw = load_canonical_bars(code, date_from or "19900101", date_to, adjust_type="raw")
     if raw is None or raw.empty:
-        return {"ok": False, "code": code, "error": "raw 无数据"}
+        return {"ok": True, "skipped": True, "code": code, "reason": "raw 无数据"}
 
     xdxr = load_xdxr_for_code(code)
     factor = build_qfq_factor_series(raw, xdxr)
@@ -143,7 +143,10 @@ def run_derive(
                 factor_version=fv,
                 log=log,
             )
-            if r.get("ok"):
+            if r.get("skipped"):
+                skip_n += 1
+                _log(log, f"  [SKIP] {code} {r.get('reason')}")
+            elif r.get("ok"):
                 ok_n += 1
             else:
                 fail_n += 1

@@ -94,7 +94,8 @@ const chartPayload = computed(() => {
       :show-period-toggle="true"
     />
     <p class="kline-note muted">
-      买卖点取自回测<strong>成交记录</strong>（T+1 开盘价撮合），标记在成交日对应价位。
+      买卖点取自回测<strong>成交记录</strong>（T+1 开盘价撮合）：<strong style="color:#e53935">B</strong> 买入、
+      <strong style="color:#43a047">S</strong> 卖出。均线含 MA13/45/60/100/250，可在图例中开关。
     </p>
   </el-card>
 </template>

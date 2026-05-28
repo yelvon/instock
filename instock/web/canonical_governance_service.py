@@ -27,7 +27,8 @@ def _rows_to_dicts(rows, columns: List[str]) -> List[Dict[str, Any]]:
     return out
 
 
-_SUMMARY_CACHE_TTL_SEC = 60
+_SUMMARY_CACHE_TTL_LIGHT_SEC = 300
+_SUMMARY_CACHE_TTL_FULL_SEC = 120
 _summary_cache_lock = Lock()
 _summary_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
@@ -37,8 +38,20 @@ def invalidate_canonical_summary_cache() -> None:
         _summary_cache.clear()
 
 
+def _table_rows_estimate(table: str) -> int:
+    """InnoDB 行数估算，毫秒级；大表概览用，非精确值。"""
+    if not mdb.checkTableIsExist(table):
+        return 0
+    row = (mdb.executeSqlFetch(
+        "SELECT TABLE_ROWS FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+        (table,),
+    ) or [(0,)])[0]
+    return int(row[0] or 0)
+
+
 def _aggregate_core_stats() -> Dict[str, int]:
-    """单次表扫描汇总行数、股票数与质量分布（替代多次 COUNT/GROUP BY）。"""
+    """单次表扫描汇总行数、股票数与质量分布（精确，大表约 7s+）。"""
     row = (mdb.executeSqlFetch(
         f"SELECT COUNT(*) AS total, COUNT(DISTINCT code) AS codes, "
         f"SUM(quality_status = 'complete') AS complete, "
@@ -55,6 +68,44 @@ def _aggregate_core_stats() -> Dict[str, int]:
     }
 
 
+def _aggregate_core_stats_light(*, cached_full: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """概览页：行数用 information_schema 估算；质量分布沿用最近一次全量缓存。"""
+    out: Dict[str, Any] = {
+        "total_bars": _table_rows_estimate(TABLE_BAR),
+        "codes": int((cached_full or {}).get("codes") or 0),
+        "complete": int((cached_full or {}).get("complete") or 0),
+        "partial": int((cached_full or {}).get("partial") or 0),
+        "suspect": int((cached_full or {}).get("suspect") or 0),
+        "approximate": True,
+    }
+    if out["codes"] <= 0 and mdb.checkTableIsExist("cn_stock_universe"):
+        urow = (mdb.executeSqlFetch("SELECT COUNT(*) FROM `cn_stock_universe`") or [(0,)])[0]
+        out["codes"] = int(urow[0] or 0)
+        out["codes_is_universe"] = True
+    return out
+
+
+def _qfq_stats(*, light: bool, cached_full: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    from instock.core.canonical.bar_tables import TABLE_BAR_QFQ
+    from instock.core.adjustment.schema import ensure_qfq_tables
+
+    ensure_qfq_tables()
+    if not mdb.checkTableIsExist(TABLE_BAR_QFQ):
+        return {"qfq_total_bars": 0, "qfq_codes": 0}
+    if light:
+        return {
+            "qfq_total_bars": _table_rows_estimate(TABLE_BAR_QFQ),
+            "qfq_codes": int((cached_full or {}).get("qfq_codes") or 0),
+        }
+    qrow = (mdb.executeSqlFetch(
+        f"SELECT COUNT(*), COUNT(DISTINCT code) FROM `{TABLE_BAR_QFQ}`"
+    ) or [(0, 0)])[0]
+    return {
+        "qfq_total_bars": int(qrow[0] or 0),
+        "qfq_codes": int(qrow[1] or 0),
+    }
+
+
 def _build_canonical_summary(*, light: bool) -> Dict[str, Any]:
     ensure_canonical_tables()
     if not mdb.checkTableIsExist(TABLE_BAR):
@@ -67,25 +118,22 @@ def _build_canonical_summary(*, light: bool) -> Dict[str, Any]:
             "complete": 0,
             "bar_sync_sources": BAR_SYNC_SOURCES,
         }
-    core = _aggregate_core_stats()
+    cached_full: Optional[Dict[str, Any]] = None
+    with _summary_cache_lock:
+        hit = _summary_cache.get("full")
+        if hit:
+            cached_full = dict(hit[1])
+
+    if light:
+        core = _aggregate_core_stats_light(cached_full=cached_full)
+    else:
+        core = _aggregate_core_stats()
     out: Dict[str, Any] = {
         "ready": True,
         "bar_sync_sources": BAR_SYNC_SOURCES,
         **core,
+        **_qfq_stats(light=light, cached_full=cached_full),
     }
-    from instock.core.canonical.bar_tables import TABLE_BAR_QFQ
-    from instock.core.adjustment.schema import ensure_qfq_tables
-
-    ensure_qfq_tables()
-    if mdb.checkTableIsExist(TABLE_BAR_QFQ):
-        qrow = (mdb.executeSqlFetch(
-            f"SELECT COUNT(*), COUNT(DISTINCT code) FROM `{TABLE_BAR_QFQ}`"
-        ) or [(0, 0)])[0]
-        out["qfq_total_bars"] = int(qrow[0] or 0)
-        out["qfq_codes"] = int(qrow[1] or 0)
-    else:
-        out["qfq_total_bars"] = 0
-        out["qfq_codes"] = 0
     if light:
         return out
     by_source_raw = mdb.executeSqlFetch(
@@ -108,15 +156,18 @@ def _build_canonical_summary(*, light: bool) -> Dict[str, Any]:
 
 def get_canonical_summary(*, light: bool = False, refresh: bool = False) -> Dict[str, Any]:
     cache_key = "light" if light else "full"
+    ttl = _SUMMARY_CACHE_TTL_LIGHT_SEC if light else _SUMMARY_CACHE_TTL_FULL_SEC
     now = time.time()
     if not refresh:
         with _summary_cache_lock:
             hit = _summary_cache.get(cache_key)
-            if hit and now - hit[0] < _SUMMARY_CACHE_TTL_SEC:
+            if hit and now - hit[0] < ttl:
                 return dict(hit[1])
     data = _build_canonical_summary(light=light)
     with _summary_cache_lock:
         _summary_cache[cache_key] = (now, data)
+        if not light:
+            _summary_cache["full"] = (now, data)
     return data
 
 

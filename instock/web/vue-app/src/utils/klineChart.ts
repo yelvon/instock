@@ -2,6 +2,20 @@ import type { ECBasicOption } from "echarts/types/dist/shared";
 
 export type KlinePeriod = "daily" | "weekly" | "monthly";
 
+/** 主图均线周期（含常用短均线 + 用户要求的 13/45/60/100/250） */
+export const KLINE_MA_PERIODS = [5, 10, 13, 20, 45, 60, 100, 250] as const;
+
+const MA_COLORS: Record<number, string> = {
+  5: "#e0e0e0",
+  10: "#fac858",
+  13: "#ff9800",
+  20: "#5470c6",
+  45: "#91cc75",
+  60: "#00bcd4",
+  100: "#ce93d8",
+  250: "#78909c",
+};
+
 export interface KlineMark {
   date: string;
   side: "buy" | "sell";
@@ -33,13 +47,67 @@ export function sma(values: number[], period: number): (number | null)[] {
   return out;
 }
 
+/** ECharts candlestick 行: [open, close, low, high] */
+function barLow(row: number[]): number {
+  return row[2] ?? row[1] ?? 0;
+}
+
+function barHigh(row: number[]): number {
+  return row[3] ?? row[1] ?? 0;
+}
+
+/**
+ * 同花顺风格买卖点：B 红、S 绿，贴在 K 线下方/上方。
+ * 使用 category 轴下标定位，避免日期字符串与 coord 不匹配导致不显示。
+ */
+function buildTradeMarkPoints(
+  dates: string[],
+  ohlc: number[][],
+  marks: KlineMark[] | undefined
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const m of marks || []) {
+    const d = m.date.slice(0, 10);
+    let idx = dates.indexOf(d);
+    if (idx < 0) idx = dates.findIndex((x) => x.slice(0, 10) === d);
+    if (idx < 0 || !ohlc[idx]) continue;
+    const row = ohlc[idx];
+    const isBuy = m.side === "buy";
+    const low = barLow(row);
+    const high = barHigh(row);
+    const y = isBuy
+      ? Math.min(m.price > 0 ? m.price : low, low) * 0.985
+      : Math.max(m.price > 0 ? m.price : high, high) * 1.015;
+    out.push({
+      name: isBuy ? "买" : "卖",
+      xAxis: idx,
+      yAxis: y,
+      value: `${isBuy ? "B" : "S"} ${m.qty}`,
+      symbol: "circle",
+      symbolSize: 20,
+      itemStyle: {
+        color: isBuy ? "#e53935" : "#43a047",
+        borderColor: "#ffffff",
+        borderWidth: 1.5,
+      },
+      label: {
+        show: true,
+        formatter: isBuy ? "B" : "S",
+        color: "#ffffff",
+        fontSize: 11,
+        fontWeight: "bold",
+      },
+      z: 10,
+    });
+  }
+  return out;
+}
+
 export function buildKlineEchartsOption(p: KlineSeriesPayload): ECBasicOption {
   if (!p.dates?.length) return {};
 
   const closes = p.ohlc.map((row) => row[1]);
-  const ma5 = sma(closes, 5);
-  const ma10 = sma(closes, 10);
-  const ma20 = sma(closes, 20);
+  const markPoints = buildTradeMarkPoints(p.dates, p.ohlc, p.marks);
 
   const volumeData = p.volume.map((v, i) => {
     const row = p.ohlc[i];
@@ -50,40 +118,37 @@ export function buildKlineEchartsOption(p: KlineSeriesPayload): ECBasicOption {
     };
   });
 
-  const buyMarks = (p.marks || [])
-    .filter((m) => m.side === "buy")
-    .map((m) => ({
-      name: "买",
-      coord: [m.date, m.price],
-      value: `买 ${m.qty}`,
-      symbol: "triangle",
-      symbolSize: 14,
-      itemStyle: { color: "#26a69a", borderColor: "#1b5e20" },
-      label: { show: true, formatter: "买", color: "#fff", fontSize: 10 },
-    }));
-  const sellMarks = (p.marks || [])
-    .filter((m) => m.side === "sell")
-    .map((m) => ({
-      name: "卖",
-      coord: [m.date, m.price],
-      value: `卖 ${m.qty}`,
-      symbol: "triangle",
-      symbolRotate: 180,
-      symbolSize: 14,
-      itemStyle: { color: "#ef5350", borderColor: "#b71c1c" },
-      label: { show: true, formatter: "卖", color: "#fff", fontSize: 10 },
-    }));
+  const maSeries = KLINE_MA_PERIODS.map((period) => ({
+    name: `MA${period}`,
+    type: "line" as const,
+    xAxisIndex: 0,
+    yAxisIndex: 0,
+    data: sma(closes, period),
+    showSymbol: false,
+    lineStyle: { width: period >= 100 ? 1.2 : 1, color: MA_COLORS[period] },
+    z: 2,
+  }));
 
-  const legend = ["K线", "MA5", "MA10", "MA20", "成交量"];
+  const legend = ["K线", ...KLINE_MA_PERIODS.map((n) => `MA${n}`), "成交量"];
+
+  const legendSelected: Record<string, boolean> = {};
+  for (const n of KLINE_MA_PERIODS) {
+    legendSelected[`MA${n}`] = n <= 20 || n === 13;
+  }
 
   return {
     backgroundColor: "transparent",
     animation: false,
-    legend: { data: legend, textStyle: { color: "#c7d0dc" } },
+    legend: {
+      type: "scroll",
+      data: legend,
+      textStyle: { color: "#c7d0dc" },
+      selected: legendSelected,
+    },
     tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     grid: [
-      { left: 56, right: 24, top: 48, height: "50%" },
+      { left: 56, right: 24, top: 56, height: "50%" },
       { left: 56, right: 24, top: "72%", height: "16%" },
     ],
     xAxis: [
@@ -125,42 +190,19 @@ export function buildKlineEchartsOption(p: KlineSeriesPayload): ECBasicOption {
         },
         markPoint: {
           symbolKeepAspect: true,
-          data: [...buyMarks, ...sellMarks],
+          data: markPoints,
+          z: 20,
         },
+        z: 5,
       },
-      {
-        name: "MA5",
-        type: "line",
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: ma5,
-        showSymbol: false,
-        lineStyle: { width: 1, color: "#fac858" },
-      },
-      {
-        name: "MA10",
-        type: "line",
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: ma10,
-        showSymbol: false,
-        lineStyle: { width: 1, color: "#91cc75" },
-      },
-      {
-        name: "MA20",
-        type: "line",
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: ma20,
-        showSymbol: false,
-        lineStyle: { width: 1, color: "#5470c6" },
-      },
+      ...maSeries,
       {
         name: "成交量",
         type: "bar",
         xAxisIndex: 1,
         yAxisIndex: 1,
         data: volumeData,
+        z: 1,
       },
     ],
   };
