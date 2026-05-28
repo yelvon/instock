@@ -93,7 +93,7 @@ interface BatchRow {
 
 const jobs = ref<JobItem[]>([]);
 const jobId = ref("basic_data_daily_job");
-const dateMode = ref<"default" | "list" | "range">("default");
+const dateMode = ref<"default" | "week" | "list" | "range">("default");
 const dateList = ref("");
 const dateStart = ref("");
 const dateEnd = ref("");
@@ -119,6 +119,10 @@ const QFQ_MODE_JOBS = new Set([
   "derive_qfq_from_tdx_job",
   "sync_tdx_local_pipeline_job",
 ]);
+const QFQ_AFTER_RAW_JOBS = new Set([
+  "sync_bars_mootdx_local_job",
+  "sync_bars_mootdx_job",
+]);
 const NO_DATE_JOBS = new Set([
   "init_job",
   "sync_trade_calendar_job",
@@ -126,7 +130,11 @@ const NO_DATE_JOBS = new Set([
   "ingest_tdx_gbbq_job",
   ...QFQ_MODE_JOBS,
 ]);
-const showQfqMode = computed(() => QFQ_MODE_JOBS.has(jobId.value));
+const deriveQfqAfter = ref(true);
+const showQfqMode = computed(
+  () => QFQ_MODE_JOBS.has(jobId.value) || QFQ_AFTER_RAW_JOBS.has(jobId.value)
+);
+const showDeriveQfqToggle = computed(() => QFQ_AFTER_RAW_JOBS.has(jobId.value));
 const isKlineBarJob = computed(
   () => jobId.value === KLINE_BAR_JOB || CANONICAL_BAR_JOBS.has(jobId.value)
 );
@@ -151,6 +159,8 @@ const detailOut = ref("");
 const trackingId = ref<string | null>(null);
 const stopping = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollInFlight = false;
+let pollAbort: AbortController | null = null;
 const progressPanel = ref(false);
 const progressText = ref("");
 const progressPercent = ref(0);
@@ -297,7 +307,14 @@ function formatRunConditions(r: RunRow): string {
     return prefix + (m === "full" ? "全量 full" : "增量 incremental");
   }
   const dm = (r.date_mode || "default").toLowerCase();
-  let cond = dm === "default" ? "默认" : dm === "list" ? `枚举：${r.date_list || ""}` : `区间：${r.date_start}~${r.date_end}`;
+  let cond =
+    dm === "week"
+      ? "最近一周"
+      : dm === "default"
+        ? "默认(约3年)"
+        : dm === "list"
+          ? `枚举：${r.date_list || ""}`
+          : `区间：${r.date_start}~${r.date_end}`;
   if (r.job_id === "basic_data_daily_job" && r.spot_data_source) {
     cond += ` · 快照：${r.spot_data_source}`;
   }
@@ -573,9 +590,15 @@ function applyDhToManual() {
 }
 
 async function pollOnce() {
-  if (!trackingId.value) return;
+  if (!trackingId.value || pollInFlight) return;
+  pollInFlight = true;
+  pollAbort?.abort();
+  pollAbort = new AbortController();
+  const abortTimer = setTimeout(() => pollAbort?.abort(), 12000);
+  try {
   const r = await fetch(
-    "/instock/api/sync/run_detail?id=" + encodeURIComponent(trackingId.value)
+    "/instock/api/sync/run_detail?id=" + encodeURIComponent(trackingId.value),
+    { signal: pollAbort.signal }
   );
   const j = await r.json();
   if (!j.ok || !j.run) return;
@@ -627,6 +650,13 @@ async function pollOnce() {
       ElMessage.error((row.error_message || "任务失败").slice(0, 200));
     }
   }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") return;
+    console.warn("poll run_detail", e);
+  } finally {
+    clearTimeout(abortTimer);
+    pollInFlight = false;
+  }
 }
 
 function startPoll(id: string, label?: string) {
@@ -645,6 +675,9 @@ function onMootdxRunStarted(runId: string, label: string) {
 function stopPoll() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = null;
+  pollAbort?.abort();
+  pollAbort = null;
+  pollInFlight = false;
   trackingId.value = null;
 }
 
@@ -692,6 +725,9 @@ async function triggerRun() {
   };
   if (showQfqMode.value) {
     payload.qfq_mode = qfqMode.value;
+  }
+  if (showDeriveQfqToggle.value) {
+    payload.derive_qfq_after = deriveQfqAfter.value;
   }
   if (jobId.value === "basic_data_daily_job") {
     payload.spot_data_source = spotSource.value;
@@ -978,7 +1014,12 @@ onUnmounted(() => {
                 仅本作业生效。选「仅 Tushare」时需已安装 tushare 并配置 token；失败不会回退东财 K 线。
               </el-text>
             </el-form-item>
-            <el-form-item v-if="showQfqMode" label="派生范围">
+            <el-form-item v-if="showDeriveQfqToggle" label="前复权">
+              <el-checkbox v-model="deriveQfqAfter">
+                补 raw 完成后自动派生前复权（同一任务日志）
+              </el-checkbox>
+            </el-form-item>
+            <el-form-item v-if="showQfqMode && (!showDeriveQfqToggle || deriveQfqAfter)" label="派生范围">
               <el-radio-group v-model="qfqMode">
                 <el-radio-button label="incremental">增量</el-radio-button>
                 <el-radio-button label="full">全量</el-radio-button>
@@ -988,11 +1029,13 @@ onUnmounted(() => {
                 type="warning"
                 style="display: block; margin-top: 6px; max-width: 520px"
               >
-                首次派生、清空 qfq 表或刚修复 gbbq 后请选「全量」；日常补 raw 后选「增量」即可。
+                增量/全量均只处理本次「补数日期」区间内 qfq（与 raw 一致）；qfq 表为空时首次会全历史派生。
+                若要重算整只股票全历史 qfq，请单独运行「派生前复权」作业。
               </el-text>
             </el-form-item>
             <el-form-item v-if="!NO_DATE_JOBS.has(jobId)" label="日期">
               <el-radio-group v-model="dateMode">
+                <el-radio-button v-if="isKlineBarJob" label="week">最近一周</el-radio-button>
                 <el-radio-button label="default">默认</el-radio-button>
                 <el-radio-button label="list" :disabled="isKlineBarJob">
                   枚举
@@ -1005,7 +1048,7 @@ onUnmounted(() => {
                 type="info"
                 style="display: block; margin-top: 6px"
               >
-                默认从约 3 年前拉至今；区间只需填开始日（结束可选）。请先跑「同步证券主表」。
+                「最近一周」适合日常增量；「默认」约 3 年用于首次全量。区间只需填开始日（结束可选）。请先跑「同步证券主表」。
               </el-text>
             </el-form-item>
             <el-form-item v-if="dateMode === 'list'" label="枚举">

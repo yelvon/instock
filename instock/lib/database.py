@@ -3,6 +3,9 @@
 
 import logging
 import os
+import threading
+from contextlib import contextmanager
+
 import pymysql
 from sqlalchemy import create_engine
 from sqlalchemy.types import NVARCHAR
@@ -45,6 +48,70 @@ MYSQL_CONN_DBAPI = {'host': db_host, 'user': db_user, 'password': db_password, '
 MYSQL_CONN_TORNDB = {'host': f'{db_host}:{str(db_port)}', 'user': db_user, 'password': db_password,
                      'database': db_database, 'charset': db_charset, 'max_idle_time': 3600, 'connect_timeout': 1000}
 
+_tls = threading.local()
+_TABLE_EXIST_CACHE: dict[str, bool] = {}
+
+
+def begin_reuse_connection() -> None:
+    """批量作业内复用同一线程的 MySQL 连接，避免 Errno 99 端口耗尽。"""
+    _tls.reuse = True
+
+
+def end_reuse_connection() -> None:
+    conn = getattr(_tls, "conn", None)
+    _tls.reuse = False
+    _tls.conn = None
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _new_connection():
+    try:
+        return pymysql.connect(**MYSQL_CONN_DBAPI)
+    except Exception as e:
+        logging.error(f"database.conn_not_cursor处理异常：{MYSQL_CONN_DBAPI}{e}")
+        return None
+
+
+def get_connection():
+    if getattr(_tls, "reuse", False):
+        conn = getattr(_tls, "conn", None)
+        if conn is None or not getattr(conn, "open", False):
+            conn = _new_connection()
+            if conn is None:
+                return None
+            _tls.conn = conn
+        return conn
+    return _new_connection()
+
+
+def _release_connection(conn) -> None:
+    if conn is None:
+        return
+    if getattr(_tls, "reuse", False) and conn is getattr(_tls, "conn", None):
+        return
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+@contextmanager
+def connection_ctx():
+    conn = get_connection()
+    if conn is None:
+        raise RuntimeError(
+            f"无法连接 MySQL（{db_host}:{db_port}/{db_database}），"
+            "请确认 InStockDbService 已启动；若刚出现 Errno 99 请重启 InStock 容器后再跑"
+        )
+    try:
+        yield conn
+    finally:
+        _release_connection(conn)
+
 
 # 通过数据库链接 engine
 def engine():
@@ -54,15 +121,6 @@ def engine():
 def engine_to_db(to_db):
     _engine = create_engine(MYSQL_CONN_URL.replace(f'/{db_database}?', f'/{to_db}?'))
     return _engine
-
-
-# DB Api -数据库连接对象connection
-def get_connection():
-    try:
-        return pymysql.connect(**MYSQL_CONN_DBAPI)
-    except Exception as e:
-        logging.error(f"database.conn_not_cursor处理异常：{MYSQL_CONN_DBAPI}{e}")
-    return None
 
 
 # 定义通用方法函数，插入数据库表，并创建数据库主键，保证重跑数据的时候索引唯一。
@@ -103,7 +161,7 @@ def insert_other_db_from_df(to_db, data, table_name, cols_type, write_index, pri
     if not ipt.get_pk_constraint(table_name)['constrained_columns']:
         try:
             # 执行数据库插入数据。
-            with get_connection() as conn:
+            with connection_ctx() as conn:
                 with conn.cursor() as db:
                     db.execute(f'ALTER TABLE `{table_name}` ADD PRIMARY KEY ({primary_keys});')
                     if indexs is not None:
@@ -119,7 +177,7 @@ def update_db_from_df(data, table_name, where):
     update_string = f'UPDATE `{table_name}` set '
     where_string = ' where '
     cols = tuple(data.columns)
-    with get_connection() as conn:
+    with connection_ctx() as conn:
         with conn.cursor() as db:
             try:
                 for row in data.values:
@@ -156,51 +214,61 @@ def update_db_from_df(data, table_name, where):
 
 # 检查表是否存在
 def checkTableIsExist(tableName):
-    with get_connection() as conn:
-        with conn.cursor() as db:
-            db.execute("""
+    t = str(tableName or "").strip()
+    if not t:
+        return False
+    if t in _TABLE_EXIST_CACHE:
+        return _TABLE_EXIST_CACHE[t]
+    try:
+        with connection_ctx() as conn:
+            with conn.cursor() as db:
+                db.execute(
+                    """
                 SELECT COUNT(*)
                 FROM information_schema.tables
                 WHERE table_name = '{0}'
-                """.format(tableName.replace('\'', '\'\'')))
-            if db.fetchone()[0] == 1:
-                return True
-    return False
+                """.format(t.replace("'", "''"))
+                )
+                exists = bool(db.fetchone()[0] == 1)
+        _TABLE_EXIST_CACHE[t] = exists
+        return exists
+    except Exception as e:
+        logging.error(f"database.checkTableIsExist处理异常：{t}{e}")
+        return False
 
 
 # 增删改数据
 def executeSql(sql, params=()):
-    with get_connection() as conn:
-        with conn.cursor() as db:
-            try:
+    try:
+        with connection_ctx() as conn:
+            with conn.cursor() as db:
                 db.execute(sql, params)
-            except Exception as e:
-                logging.error(f"database.executeSql处理异常：{sql}{e}")
+    except Exception as e:
+        logging.error(f"database.executeSql处理异常：{sql}{e}")
 
 
 # 查询数据
 def executeSqlFetch(sql, params=()):
-    with get_connection() as conn:
-        with conn.cursor() as db:
-            try:
+    try:
+        with connection_ctx() as conn:
+            with conn.cursor() as db:
                 db.execute(sql, params)
                 return db.fetchall()
-            except Exception as e:
-                logging.error(f"database.executeSqlFetch处理异常：{sql}{e}")
+    except Exception as e:
+        logging.error(f"database.executeSqlFetch处理异常：{sql}{e}")
     return None
 
 
 # 计算数量
 def executeSqlCount(sql, params=()):
-    with get_connection() as conn:
-        with conn.cursor() as db:
-            try:
+    try:
+        with connection_ctx() as conn:
+            with conn.cursor() as db:
                 db.execute(sql, params)
                 result = db.fetchall()
                 if len(result) == 1:
                     return int(result[0][0])
-                else:
-                    return 0
-            except Exception as e:
-                logging.error(f"database.select_count计算数量处理异常：{e}")
+                return 0
+    except Exception as e:
+        logging.error(f"database.select_count计算数量处理异常：{e}")
     return 0

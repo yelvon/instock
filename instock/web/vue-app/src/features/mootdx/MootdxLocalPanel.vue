@@ -35,10 +35,12 @@ const verifyMsg = ref("");
 const local = ref<MootdxLocalDetail | null>(null);
 const canonical = ref<CanonicalSummary | null>(null);
 
-const barDateMode = ref<"default" | "range">("default");
+const barDateMode = ref<"default" | "week" | "range">("week");
 const barDateStart = ref("");
 const barDateEnd = ref("");
 const barLimit = ref(0);
+const deriveQfqAfter = ref(true);
+const qfqMode = ref<"incremental" | "full">("incremental");
 
 const ready = computed(
   () =>
@@ -107,6 +109,10 @@ async function triggerJob(
     date_end: barDateEnd.value.trim(),
   };
   if (extra && Object.keys(extra).length) payload.extra_env = extra;
+  if (jobId.includes("bars")) {
+    payload.derive_qfq_after = deriveQfqAfter.value;
+    payload.qfq_mode = qfqMode.value;
+  }
   if (barLimit.value > 0 && jobId.includes("bars")) {
     ElMessage.info("试跑 limit 请用命令行 --limit；页面将跑全市场");
   }
@@ -229,15 +235,19 @@ onMounted(() => void loadStatus());
       <el-steps :active="ready ? 2 : 0" align-center finish-status="success" class="mb">
         <el-step title="盘后下载" description="虚拟机通达信更新 vipdoc" />
         <el-step title="扫描代码表" description="本地 vipdoc → cn_stock_universe" />
-        <el-step title="补标准日线" description="写入 cn_stock_daily_bar" />
+        <el-step title="补标准日线 + 前复权" description="raw → qfq 派生" />
       </el-steps>
 
       <el-form label-width="110px" class="action-form">
         <el-form-item label="K 线日期">
           <el-radio-group v-model="barDateMode">
-            <el-radio-button label="default">默认（约3年）</el-radio-button>
+            <el-radio-button label="week">最近一周</el-radio-button>
+            <el-radio-button label="default">约3年</el-radio-button>
             <el-radio-button label="range">区间</el-radio-button>
           </el-radio-group>
+          <el-text size="small" type="info" style="display: block; margin-top: 6px">
+            日常盘后补数建议「最近一周」；配合存量跳过只写缺日。首次入库或大范围补历史请选「约3年」或自定义区间。
+          </el-text>
         </el-form-item>
         <el-form-item v-if="barDateMode === 'range'" label="区间">
           <el-date-picker
@@ -255,6 +265,21 @@ onMounted(() => void loadStatus());
             placeholder="结束（可空）"
             style="width: 150px"
           />
+        </el-form-item>
+        <el-form-item label="前复权">
+          <el-checkbox v-model="deriveQfqAfter">补 raw 后自动派生前复权（同一任务）</el-checkbox>
+          <el-radio-group
+            v-model="qfqMode"
+            :disabled="!deriveQfqAfter"
+            style="margin-left: 12px"
+          >
+            <el-radio-button label="incremental">增量</el-radio-button>
+            <el-radio-button label="full">全量</el-radio-button>
+          </el-radio-group>
+          <el-text size="small" type="info" style="display: block; margin-top: 6px">
+            前复权派生范围与上方「补数日期」一致（如最近一周），不会从 2006 重跑全市场。
+            qfq 表为空时首次会自动全历史派生。需已 ingest gbbq。
+          </el-text>
         </el-form-item>
         <el-form-item label="操作">
           <el-space wrap>
@@ -274,9 +299,9 @@ onMounted(() => void loadStatus());
               type="success"
               :icon="VideoPlay"
               :disabled="!ready"
-              @click="triggerJob('sync_bars_mootdx_local_job', '标准库·通达信本地')"
+              @click="triggerJob('sync_bars_mootdx_local_job', '标准库·本地 raw+qfq')"
             >
-              ② 补标准日线（仅本地）
+              ② 补标准日线 + 前复权
             </el-button>
             <el-button
               :icon="VideoPlay"

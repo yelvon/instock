@@ -113,7 +113,17 @@ def filter_bars_to_missing_dates(df, missing_iso_dates: List[str]):
     miss = set(missing_iso_dates)
     work = df.copy()
     if "date" not in work.columns:
-        return work
+        if isinstance(work.index, pd.DatetimeIndex):
+            work = work.reset_index()
+            if work.columns[0] != "date":
+                work = work.rename(columns={work.columns[0]: "date"})
+        elif work.index.name in ("date", "datetime", None):
+            work = work.reset_index()
+            first = work.columns[0]
+            if first != "date":
+                work = work.rename(columns={first: "date"})
+        else:
+            return work
     work["_d"] = pd.to_datetime(work["date"], errors="coerce").dt.strftime("%Y-%m-%d")
     out = work[work["_d"].isin(miss)].drop(columns=["_d"], errors="ignore")
     return out

@@ -207,8 +207,10 @@ def cancel_run(run_id: str) -> bool:
     return True
 
 
-def _decode_log_line(raw: bytes, task_id: str) -> str:
+def _decode_log_line(raw: bytes | str, task_id: str) -> str:
     """tdx_sync：Mac 脚本 echo 为 UTF-8，Windows robocopy 为 GBK/CP936，按行分别解码。"""
+    if isinstance(raw, str):
+        return raw
     if not raw:
         return ""
     if task_id != "tdx_sync":
@@ -236,17 +238,21 @@ def _execute(run_id: str, task_id: str, cmd: List[str], cwd: str) -> None:
     env.setdefault("LC_ALL", "en_US.UTF-8")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=not use_binary,
-            encoding=None if use_binary else "utf-8",
-            errors="replace",
-            bufsize=0 if use_binary else 1,
-        )
+        popen_kw: Dict[str, Any] = {
+            "cwd": cwd,
+            "env": env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+        }
+        if use_binary:
+            popen_kw["text"] = False
+            popen_kw["bufsize"] = 0
+        else:
+            popen_kw["text"] = True
+            popen_kw["encoding"] = "utf-8"
+            popen_kw["errors"] = "replace"
+            popen_kw["bufsize"] = 1
+        proc = subprocess.Popen(cmd, **popen_kw)
         with _LOCK:
             _ACTIVE[run_id] = proc
         assert proc.stdout is not None

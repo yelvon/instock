@@ -29,10 +29,86 @@ from instock.core.canonical.sync_plan import (
     plan_canonical_sync,
     sync_skip_complete_enabled,
 )
-from instock.core.canonical.writer import CanonicalBarWriter
+import instock.lib.database as mdb
+from instock.core.canonical.writer import CanonicalBarWriter, ensure_canonical_tables
+from instock.core.data.lineage import ensure_data_batch_table, record_canonical_batch
 from instock.core.mootdx_universe import count_universe, load_universe_codes
 
 VALID_SOURCES = ("mootdx", "mootdx_local", "mootdx_online", "tushare", "akshare", "eastmoney")
+_QFQ_AFTER_SOURCES = frozenset({"mootdx_local", "mootdx"})
+
+
+def _qfq_derive_mode() -> str:
+    m = os.environ.get("INSTOCK_QFQ_DERIVE_MODE", "incremental").strip().lower()
+    if m in ("0", "off", "no", "false", "skip"):
+        return ""
+    if m in ("full", "incremental"):
+        return m
+    return "incremental"
+
+
+def _run_qfq_derive_phase(source: str, date_from: str, date_to: str) -> bool:
+    """raw 补数结束后在同一进程派生前复权；区间与本次 raw 补数一致。"""
+    mode = _qfq_derive_mode()
+    if not mode or source not in _QFQ_AFTER_SOURCES:
+        return True
+    from instock.core.canonical.sync_plan import resolve_sync_range
+
+    d0, d1 = resolve_sync_range(
+        (date_from or "").strip() or "1990-01-01",
+        (date_to or "").strip(),
+    )
+    scope_from = d0.isoformat()
+    scope_to = d1.isoformat()
+    from instock.core.adjustment.corporate_action_store import (
+        get_stored_factor_version,
+        ingest_gbbq_to_db,
+        qfq_table_has_rows,
+    )
+    from instock.core.adjustment.derive import run_derive
+    from instock.core.adjustment.gbbq_reader import gbbq_factor_version
+
+    _emit(f"[PROGRESS] raw 阶段结束，开始派生前复权（mode={mode}）…")
+    if not get_stored_factor_version():
+        _emit("[qfq] gbbq 未入库，先 ingest …")
+        ing = ingest_gbbq_to_db()
+        if ing.get("error"):
+            _emit(f"[FAIL] ingest gbbq: {ing.get('error')}")
+            return False
+        _emit(f"[qfq] ingest 完成 rows={ing.get('rows', 0)}")
+    cur = gbbq_factor_version()
+    stored = get_stored_factor_version()
+    if cur and cur != stored:
+        _emit(f"[qfq] gbbq 版本变化 {stored} -> {cur}，重新 ingest")
+        ingest_gbbq_to_db()
+        mode = "full"
+    limit_scope = bool(scope_from)
+    if mode == "incremental" and not qfq_table_has_rows():
+        _emit("[HINT] qfq 表为空，首次执行全历史派生（与本次 raw 区间无关）")
+        mode = "full"
+        limit_scope = False
+    elif limit_scope:
+        _emit(
+            f"[HINT] qfq 派生区间与 raw 补数一致: {scope_from} ~ {scope_to or '最新'} "
+            f"（复权计算仍用该股全历史 raw，仅写入该区间）"
+        )
+
+    r = run_derive(
+        mode=mode,
+        skip_ingest=True,
+        log=_emit,
+        date_from=scope_from,
+        date_to=scope_to,
+        limit_sync_scope=limit_scope,
+    )
+    ok = bool(r.get("ok"))
+    _emit(
+        f"[PROGRESS] qfq 派生完成 ok={r.get('success', 0)} skip={r.get('skipped', 0)} "
+        f"fail={r.get('failed', 0)} mode={mode}"
+    )
+    if not ok:
+        _emit(f"[FAIL] qfq: {r.get('error') or r.get('hint') or 'derive failed'}")
+    return ok
 
 
 def _default_from_date() -> str:
@@ -50,12 +126,18 @@ def _emit(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _worker_db_init() -> None:
+    """线程池 worker 内复用连接（每线程一条，避免 Errno 99）。"""
+    mdb.begin_reuse_connection()
+
+
 def _sync_one(
     source: str,
     code: str,
     date_from: str,
     date_to: str,
     also_pickle: bool,
+    job_batch_id: str = "",
 ) -> tuple[str, bool, str]:
     try:
         if sync_skip_complete_enabled():
@@ -87,8 +169,16 @@ def _sync_one(
                     f"skip 拉取后无待补行（缺日 {len(missing)}，或源未含该区间）",
                 )
         writer = CanonicalBarWriter(pid or source)
-        stats = writer.write_dataframe(code, df)
+        stats = writer.write_dataframe(
+            code, df, batch_id=job_batch_id or None
+        )
         if stats.inserted + stats.filled == 0 and len(df) > 0:
+            if stats.skipped > 0 and stats.errors == 0 and stats.conflict == 0:
+                return (
+                    code,
+                    True,
+                    f"skip 库内已完整 {stats.skipped} 日（拉取 {len(df)} 行）",
+                )
             return (
                 code,
                 False,
@@ -171,14 +261,27 @@ def main():
         )
     if args.source == "mootdx_local":
         _emit(
-            "[HINT] 本地通达信补数默认 workers=1（单连接写库）；"
-            "若见 MySQL Errno 99 请停止任务后重建 InStock 容器再跑"
+            "[HINT] 本地通达信补数默认 workers=1，作业内复用 MySQL 连接；"
+            "若见 Errno 99 / Can't connect：停止任务 → docker restart InStock → 再跑"
         )
     if sync_skip_complete_enabled():
         _emit(
             "[HINT] 已启用存量跳过（INSTOCK_SYNC_SKIP_COMPLETE=1）："
             "区间内 raw 已完整则不再拉取/写入；有缺口仅 merge 缺失日"
         )
+
+    ensure_canonical_tables()
+    ensure_data_batch_table()
+    mdb.begin_reuse_connection()
+    try:
+        job_batch_id = record_canonical_batch(
+            args.source,
+            scope_key=f"sync_bars:{args.source}",
+            row_count=0,
+            job_id="sync_bars_source_job",
+        )
+    finally:
+        mdb.end_reuse_connection()
 
     ok_n = fail_n = 0
     done_n = 0
@@ -196,7 +299,9 @@ def main():
     hb.start()
 
     try:
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        with ThreadPoolExecutor(
+            max_workers=max(1, workers), initializer=_worker_db_init
+        ) as ex:
             futs = {
                 ex.submit(
                     _sync_one,
@@ -205,6 +310,7 @@ def main():
                     args.from_date,
                     args.to_date,
                     args.also_pickle,
+                    job_batch_id,
                 ): c
                 for c in codes
             }
@@ -228,6 +334,10 @@ def main():
 
     _emit(f"[PROGRESS] {total}/{total} {prefix} 完成 ok={ok_n} fail={fail_n}")
     logging.info("%s 完成: ok=%s fail=%s total=%s", prefix, ok_n, fail_n, total)
+
+    qfq_ok = _run_qfq_derive_phase(args.source, args.from_date, args.to_date or "")
+    if not qfq_ok:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

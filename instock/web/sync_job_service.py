@@ -99,7 +99,7 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "hint": "仅读 INSTOCK_TDX_DIR/vipdoc",
         "canonical_source": "mootdx_local",
         "mootdx_panel": True,
-        "description": "只读本地通达信 vipdoc，写入 cn_stock_daily_bar；需配置 INSTOCK_TDX_DIR 并先同步证券主表（本地扫描）。",
+        "description": "只读本地通达信 vipdoc，写入 cn_stock_daily_bar(raw)；完成后默认接续派生 cn_stock_daily_bar_qfq（前复权）。需 gbbq 已同步/ingest。",
     },
     {
         "id": "sync_bars_mootdx_job",
@@ -217,6 +217,9 @@ JOB_ITEMS: List[Dict[str, str]] = [
 ]
 
 QFQ_MODE_JOB_IDS = frozenset({"derive_qfq_from_tdx_job", "sync_tdx_local_pipeline_job"})
+JOBS_WITH_QFQ_AFTER_RAW = frozenset(
+    {"sync_bars_mootdx_local_job", "sync_bars_mootdx_job"}
+)
 
 
 def normalize_qfq_mode(mode: str, *, default: str = "incremental") -> str:
@@ -254,6 +257,9 @@ def _progress_meta(merged_out: str) -> Tuple[int, int, int, str, str, int, int]:
     """字节数、行数、疑似报错行数、报错尾、最近进度文案、进度 current、进度 total。"""
     if not merged_out:
         return 0, 0, 0, "", "", 0, 0
+    # 仅扫描尾部，避免长任务对整段输出反复正则导致 worker/API 卡顿
+    if len(merged_out) > 120_000:
+        merged_out = merged_out[-120_000:]
     lines = merged_out.split("\n")
     nlines = len(lines)
     nbytes = len(merged_out.encode("utf-8"))
@@ -368,15 +374,44 @@ def list_jobs() -> List[Dict[str, str]]:
     return list(JOB_ITEMS)
 
 
-def list_runs(limit: int = 100) -> List[Dict[str, Any]]:
+def list_runs(limit: int = 100, *, include_output: bool = False) -> List[Dict[str, Any]]:
     with _LOCK:
         items = [_RUNS[i] for i in reversed(_ORDER) if i in _RUNS]
-    return items[: max(1, min(limit, _MAX_RUNS))]
+    out = items[: max(1, min(limit, _MAX_RUNS))]
+    if include_output:
+        return out
+    slim: List[Dict[str, Any]] = []
+    for r in out:
+        row = {k: v for k, v in r.items() if k not in ("stdout_tail", "stderr_tail")}
+        row["has_stdout"] = bool(r.get("stdout_tail"))
+        slim.append(row)
+    return slim
 
 
 def get_run(run_id: str) -> Optional[Dict[str, Any]]:
     with _LOCK:
         return _RUNS.get(run_id)
+
+
+def get_run_for_api(
+    run_id: str,
+    *,
+    tail_chars: int = 0,
+) -> Optional[Dict[str, Any]]:
+    """API 用：复制记录并可选截断 stdout，避免超大 JSON 阻塞 Tornado。"""
+    with _LOCK:
+        r = _RUNS.get(run_id)
+        if not r:
+            return None
+        out = dict(r)
+    limit = tail_chars if tail_chars > 0 else _max_output_chars
+    tail = out.get("stdout_tail") or ""
+    if len(tail) > limit:
+        out["stdout_tail"] = _truncate(tail)
+        out["stdout_truncated"] = True
+    else:
+        out.setdefault("stdout_truncated", False)
+    return out
 
 
 def cancel_run(run_id: str) -> Dict[str, Any]:
@@ -552,6 +587,9 @@ def _mootdx_bars_cli_args(
         today = datetime.date.today().isoformat()
         ds, _ = trd.get_trade_hist_interval(today)
         return ["--from-date", ds]
+    if dm == "week":
+        today = datetime.date.today().isoformat()
+        return ["--from-date", trd.get_recent_week_start(today)]
     if dm == "range":
         ds = (date_start or "").strip()
         de = (date_end or "").strip()
@@ -561,7 +599,7 @@ def _mootdx_bars_cli_args(
         if de:
             args.extend(["--to-date", de])
         return args
-    raise ValueError("K 线补数作业请使用「默认」或「区间」日期模式")
+    raise ValueError("K 线补数作业请使用「默认」「最近一周」或「区间」日期模式")
 
 
 def _bar_data_source_env(bar_data_source: str) -> Dict[str, str]:
@@ -720,7 +758,7 @@ def _worker(run_id: str) -> None:
                     r["progress_hint"] = prog_hint
                     r["progress_current"] = prog_cur
                     r["progress_total"] = prog_tot
-            if now - last_persist > 0.5:
+            if now - last_persist > 1.5:
                 last_persist = now
                 _persist()
         code = proc.wait()
@@ -735,7 +773,10 @@ def _worker(run_id: str) -> None:
             _ACTIVE_PROCS.pop(run_id, None)
     mo = merged_out or ""
     nbytes, nlines, err_cnt, err_tail, prog_hint, prog_cur, prog_tot = _progress_meta(mo)
-    has_fail_markers = "[FAIL]" in mo
+    has_fail_markers = bool(
+        re.search(r"(?m)^\[FAIL\]", mo)
+        or re.search(r"(?m)^\s*RuntimeError:\s*\[FAIL\]", mo)
+    )
     with _LOCK:
         r = _RUNS.get(run_id)
         if r:
@@ -792,13 +833,51 @@ def _worker(run_id: str) -> None:
                     )
             elif status == "success" and not r.get("error_message"):
                 r["error_message"] = None
-            if status == "success" and r.get("job_id") == "sync_bars_mootdx_local_job":
-                _maybe_auto_derive_qfq(r)
+            extra = r.get("extra_env") or {}
+            qfq_in_job = (extra.get("INSTOCK_QFQ_DERIVE_MODE") or "").strip().lower() not in (
+                "",
+                "0",
+                "off",
+                "no",
+                "false",
+            )
+            if (
+                status == "success"
+                and r.get("job_id") == "sync_bars_mootdx_local_job"
+                and not qfq_in_job
+            ):
+                threading.Thread(
+                    target=_maybe_auto_derive_qfq,
+                    args=(r,),
+                    daemon=True,
+                    name=f"qfq-auto-{run_id[:8]}",
+                ).start()
     _persist()
 
 
+def _resolve_bar_sync_dates_for_run(run: Dict[str, Any]) -> Tuple[str, str]:
+    """从任务记录还原 raw/qfq 补数区间（与 _mootdx_bars_cli_args 一致）。"""
+    import datetime
+
+    import instock.lib.trade_time as trd
+    from instock.core.canonical.sync_plan import resolve_sync_range
+
+    dm = (run.get("date_mode") or "default").strip().lower()
+    ds = (run.get("date_start") or "").strip()
+    de = (run.get("date_end") or "").strip()
+    today = datetime.date.today().isoformat()
+    if dm == "week":
+        ds = ds or trd.get_recent_week_start(today)
+    elif dm == "default":
+        ds, _ = trd.get_trade_hist_interval(today)
+    elif dm == "range" and not ds:
+        return "", ""
+    d0, d1 = resolve_sync_range(ds or "1990-01-01", de or "")
+    return d0.isoformat(), d1.isoformat()
+
+
 def _maybe_auto_derive_qfq(run: Dict[str, Any]) -> None:
-    """raw 本地补数成功后，按配置自动接续 qfq 派生。"""
+    """raw 本地补数成功后，按配置自动接续 qfq 派生（未在作业子进程内派生时的兜底）。"""
     if os.environ.get("INSTOCK_AUTO_DERIVE_QFQ", "1").strip().lower() in (
         "0",
         "false",
@@ -812,7 +891,7 @@ def _maybe_auto_derive_qfq(run: Dict[str, Any]) -> None:
         from instock.core.adjustment.gbbq_reader import gbbq_factor_version
         from instock.core.adjustment.corporate_action_store import get_stored_factor_version
 
-        mode = "incremental"
+        mode = normalize_qfq_mode(run.get("qfq_mode") or "incremental")
         cur = gbbq_factor_version()
         stored = get_stored_factor_version()
         if cur and cur != stored:
@@ -825,13 +904,31 @@ def _maybe_auto_derive_qfq(run: Dict[str, Any]) -> None:
             return
 
         def _log(msg: str) -> None:
-            tail = (run.get("stdout_tail") or "") + f"\n[qfq-auto] {msg}\n"
-            run["stdout_tail"] = _truncate(tail)
+            with _LOCK:
+                tail = (run.get("stdout_tail") or "") + f"\n[qfq-auto] {msg}\n"
+                run["stdout_tail"] = _truncate(tail)
 
-        r = run_derive(mode=mode, skip_ingest=True, log=_log)
-        run["qfq_auto_result"] = r
+        df, dt = _resolve_bar_sync_dates_for_run(run)
+        limit_scope = bool(df)
+        if mode == "incremental" and not qfq_table_has_rows():
+            _log("[qfq-auto] qfq 表为空，首次全历史派生")
+            mode = "full"
+            limit_scope = False
+        r = run_derive(
+            mode=mode,
+            skip_ingest=True,
+            log=_log,
+            date_from=df,
+            date_to=dt,
+            limit_sync_scope=limit_scope,
+        )
+        with _LOCK:
+            run["qfq_auto_result"] = r
     except Exception as e:
-        run["qfq_auto_error"] = str(e)[:500]
+        with _LOCK:
+            run["qfq_auto_error"] = str(e)[:500]
+    finally:
+        _persist()
 
 
 def start_job(
@@ -847,9 +944,19 @@ def start_job(
     schedule_id: str = "",
     schedule_title: str = "",
     extra_env: Optional[Dict[str, str]] = None,
+    derive_qfq_after: bool = True,
 ) -> Dict[str, Any]:
-    qfq_saved = normalize_qfq_mode(qfq_mode) if job_id in QFQ_MODE_JOB_IDS else ""
+    qfq_saved = ""
+    if job_id in QFQ_MODE_JOB_IDS:
+        qfq_saved = normalize_qfq_mode(qfq_mode)
+    elif job_id in JOBS_WITH_QFQ_AFTER_RAW:
+        qfq_saved = normalize_qfq_mode(qfq_mode) if derive_qfq_after else "off"
     cmd = _build_command(job_id, date_mode, date_start, date_end, date_list, qfq_mode=qfq_saved or "incremental")
+    merged_extra = dict(extra_env or {})
+    if job_id in JOBS_WITH_QFQ_AFTER_RAW:
+        merged_extra["INSTOCK_QFQ_DERIVE_MODE"] = (
+            qfq_saved if derive_qfq_after else "off"
+        )
     run_id = str(uuid.uuid4())
     label = next((j["title"] for j in JOB_ITEMS if j["id"] == job_id), job_id)
     spot_saved = ""
@@ -893,7 +1000,8 @@ def start_job(
         "progress_total": 0,
         "post_verify": None,
         "batch_ids": [],
-        "extra_env": dict(extra_env or {}),
+        "extra_env": merged_extra,
+        "derive_qfq_after": bool(derive_qfq_after) if job_id in JOBS_WITH_QFQ_AFTER_RAW else None,
     }
     with _LOCK:
         _RUNS[run_id] = rec

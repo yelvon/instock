@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 TABLE_BAR = "cn_stock_daily_bar"
 TABLE_CONTRIB = "market_data_contribution"
+_CANONICAL_DDL_DONE = False
 
 
 @dataclass
@@ -42,6 +43,9 @@ class MergeStats:
 
 
 def ensure_canonical_tables() -> None:
+    global _CANONICAL_DDL_DONE
+    if _CANONICAL_DDL_DONE:
+        return
     ddl_bar = """
     CREATE TABLE IF NOT EXISTS `cn_stock_daily_bar` (
       `date` date NOT NULL,
@@ -86,12 +90,13 @@ def ensure_canonical_tables() -> None:
       KEY `idx_source` (`source_provider`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     """
-    with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
+    with mdb.connection_ctx() as conn:
         with conn.cursor() as cur:
             cur.execute(ddl_bar)
             cur.execute(ddl_contrib)
         conn.commit()
     ensure_data_batch_table()
+    _CANONICAL_DDL_DONE = True
 
 
 class CanonicalBarWriter:
@@ -134,7 +139,9 @@ class CanonicalBarWriter:
             row_count=len(rows),
             job_id="canonical_bar_writer",
         )
-        conn = pymysql.connect(**mdb.MYSQL_CONN_DBAPI)
+        conn = mdb.get_connection()
+        if conn is None:
+            raise RuntimeError("无法连接 MySQL，补数写入中止")
         try:
             existing_map = self._load_existing_map(conn, code)
             for row in rows:
@@ -148,7 +155,7 @@ class CanonicalBarWriter:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            mdb._release_connection(conn)
         return stats
 
     def _load_existing_map(self, conn: pymysql.Connection, code: str) -> Dict[Any, Dict[str, Any]]:

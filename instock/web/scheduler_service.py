@@ -81,7 +81,7 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"未知 job_id: {job_id}")
         enabled = bool(sch.get("enabled", True))
         date_mode = str(sch.get("date_mode") or "default").strip().lower()
-        if date_mode not in ("default", "list", "range"):
+        if date_mode not in ("default", "week", "list", "range"):
             date_mode = "default"
         if job_id in ("init_job", "sync_trade_calendar_job"):
             date_mode = "default"

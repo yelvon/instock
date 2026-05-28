@@ -82,19 +82,44 @@ _PRESETS: Dict[str, Dict[str, Any]] = {
     PRESET_EASTMONEY_CLASSIC: {
         "id": PRESET_EASTMONEY_CLASSIC,
         "title": "东财传统",
-        "summary": "快照与 K 线自动链路（含东财回退），与原版行为接近",
+        "summary": "快照东财 + 综合选股 + 资金流/龙虎榜等 + 盘后数据；K 线自动链路（含东财回退）",
         "prefs": {
             "default_spot_data_source": "eastmoney",
             "default_bar_data_source": "auto",
             "eastmoney_push2_host": "auto",
+            "active_preset_id": PRESET_EASTMONEY_CLASSIC,
         },
         "scheduler_templates": [
+            {
+                "title": "工作日-交易日历",
+                "job_id": "sync_trade_calendar_job",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["08:30"],
+            },
             {
                 "title": "工作日-股票快照(东财)",
                 "job_id": "basic_data_daily_job",
                 "spot_data_source": "eastmoney",
                 "weekdays": [0, 1, 2, 3, 4],
                 "times": ["17:30"],
+            },
+            {
+                "title": "工作日-综合选股(东财)",
+                "job_id": "selection_data_daily_job",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["17:40"],
+            },
+            {
+                "title": "工作日-其它基础数据(东财)",
+                "job_id": "basic_data_other_daily_job",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["18:15"],
+            },
+            {
+                "title": "工作日-盘后数据",
+                "job_id": "basic_data_after_close_daily_job",
+                "weekdays": [0, 1, 2, 3, 4],
+                "times": ["19:00"],
             },
         ],
     },

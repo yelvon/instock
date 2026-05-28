@@ -118,6 +118,18 @@ def is_open(now_time):
     return False
 
 
+def get_recent_week_start(date=None):
+    """最近一周起始日 YYYYMMDD（日历向前 7 天；日常增量补数用）。"""
+    if date is None:
+        end = datetime.datetime.now().date()
+    elif isinstance(date, str):
+        end = datetime.datetime.strptime(str(date)[:10], "%Y-%m-%d").date()
+    else:
+        end = date
+    start = end - datetime.timedelta(days=7)
+    return start.strftime("%Y%m%d")
+
+
 def get_trade_hist_interval(date):
     tmp_year, tmp_month, tmp_day = date.split("-")
     date_end = datetime.datetime(int(tmp_year), int(tmp_month), int(tmp_day))

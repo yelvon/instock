@@ -71,7 +71,6 @@ class Provider(BaseProvider):
                 d1 = pd.to_datetime(date_to, errors="coerce")
                 mask &= df["_d"] <= d1
             df = df.loc[mask].drop(columns=["_d"], errors="ignore")
-        df = df.set_index("date") if "date" in df.columns else df
         meta = {"tdx_dir": tdx_dir(), "adjust": "raw"}
         return FetchResult(
             ok=not df.empty,

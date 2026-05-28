@@ -83,7 +83,11 @@ class SyncRunDetailApiHandler(webBase.BaseHandler, ABC):
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": "缺少 id"}, ensure_ascii=False))
             return
-        r = syncsvc.get_run(run_id)
+        try:
+            tail = int(self.get_argument("tail", "0"))
+        except ValueError:
+            tail = 0
+        r = syncsvc.get_run_for_api(run_id, tail_chars=tail)
         if not r:
             self.set_status(404)
             self.write(json.dumps({"ok": False, "error": "记录不存在"}, ensure_ascii=False))
@@ -110,6 +114,11 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
             extra_env = body.get("extra_env")
             if extra_env is not None and not isinstance(extra_env, dict):
                 extra_env = None
+            derive_qfq = body.get("derive_qfq_after")
+            if derive_qfq is None:
+                derive_qfq = True
+            else:
+                derive_qfq = bool(derive_qfq)
             rec = syncsvc.start_job(
                 job_id,
                 date_mode=body.get("date_mode") or "default",
@@ -120,6 +129,7 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
                 spot_data_source=(body.get("spot_data_source") or ""),
                 bar_data_source=(body.get("bar_data_source") or ""),
                 extra_env=extra_env,
+                derive_qfq_after=derive_qfq,
             )
             self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
         except Exception as e:

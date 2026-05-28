@@ -79,7 +79,7 @@ interface ScheduleRow {
 
 const jobs = ref<JobItem[]>([]);
 const jobId = ref("basic_data_daily_job");
-const dateMode = ref<"default" | "list" | "range">("default");
+const dateMode = ref<"default" | "week" | "list" | "range">("default");
 const dateList = ref("");
 const dateStart = ref("");
 const dateEnd = ref("");
@@ -131,6 +131,8 @@ const detailErrTail = ref("");
 const trackingId = ref<string | null>(null);
 const stopping = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollInFlight = false;
+let pollAbort: AbortController | null = null;
 
 const progressPanel = ref(false);
 const progressText = ref("");
@@ -231,7 +233,8 @@ function formatRunConditions(r: RunRow): string {
   }
   const dm = (r.date_mode || "default").toLowerCase();
   let cond = "";
-  if (dm === "default") cond = "默认";
+  if (dm === "week") cond = "最近一周";
+  else if (dm === "default") cond = "默认(约3年)";
   else if (dm === "list")
     cond = r.date_list?.trim() ? `枚举：${r.date_list}` : "枚举：（未填）";
   else if (dm === "range") {
@@ -400,9 +403,15 @@ async function loadRuns() {
 }
 
 async function pollOnce() {
-  if (!trackingId.value) return;
+  if (!trackingId.value || pollInFlight) return;
+  pollInFlight = true;
+  pollAbort?.abort();
+  pollAbort = new AbortController();
+  const abortTimer = setTimeout(() => pollAbort?.abort(), 12000);
+  try {
   const r = await fetch(
-    "/instock/api/sync/run_detail?id=" + encodeURIComponent(trackingId.value)
+    "/instock/api/sync/run_detail?id=" + encodeURIComponent(trackingId.value),
+    { signal: pollAbort.signal }
   );
   const j = await r.json();
   if (!j.ok || !j.run) return;
@@ -470,6 +479,13 @@ async function pollOnce() {
       ElMessage.error((row.error_message || "任务失败").slice(0, 200) + extra);
     }
   }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") return;
+    console.warn("poll run_detail", e);
+  } finally {
+    clearTimeout(abortTimer);
+    pollInFlight = false;
+  }
 }
 
 function startPoll(id: string) {
@@ -485,6 +501,9 @@ function stopPoll() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  pollAbort?.abort();
+  pollAbort = null;
+  pollInFlight = false;
   trackingId.value = null;
 }
 
@@ -1387,6 +1406,7 @@ docker exec InStock printenv INSTOCK_TDX_DIR   # 应输出 /tdx</pre>
         </el-form-item>
         <el-form-item v-if="!NO_DATE_JOBS.has(jobId)" label="日期参数">
           <el-radio-group v-model="dateMode">
+            <el-radio-button v-if="isKlineBarJob" label="week">最近一周</el-radio-button>
             <el-radio-button label="default">默认</el-radio-button>
             <el-radio-button label="list" :disabled="isKlineBarJob">
               枚举
@@ -1399,7 +1419,7 @@ docker exec InStock printenv INSTOCK_TDX_DIR   # 应输出 /tdx</pre>
             type="info"
             style="display: block; margin-top: 6px"
           >
-            默认从约 3 年前拉至今；区间只需填开始日（结束可选）。
+            「最近一周」适合日常增量；「默认」约 3 年用于首次全量。区间只需填开始日（结束可选）。
           </el-text>
         </el-form-item>
         <el-form-item v-if="dateMode === 'list'" label="枚举日期">
