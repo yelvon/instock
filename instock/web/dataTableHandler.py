@@ -98,6 +98,23 @@ def _parse_query_context(web_module_data, args: dict) -> dict:
     }
 
 
+def _resolve_bar_table_context(web_module_data, ctx: dict) -> tuple:
+    """raw/qfq 分表：qfq 时改查 cn_stock_daily_bar_qfq 且不再过滤 adjust_type。"""
+    table = web_module_data.table_name
+    ctx = dict(ctx)
+    if table != tbs.TABLE_CN_STOCK_DAILY_BAR["name"]:
+        return table, ctx
+    try:
+        from instock.core.canonical.bar_tables import normalize_adjust_type, resolve_bar_table
+
+        adj = normalize_adjust_type(ctx.get("adjust_type") or "raw")
+        if adj == "qfq":
+            return resolve_bar_table("qfq"), {**ctx, "adjust_type": None}
+    except Exception:
+        pass
+    return table, ctx
+
+
 def _build_where_sql(web_module_data, ctx: dict, use_join: bool) -> tuple:
     clauses = []
     params = []
@@ -168,7 +185,7 @@ def _build_list_sql(
     sort_dir=None,
 ):
     """返回 (sql, params)。"""
-    table = web_module_data.table_name
+    table, ctx = _resolve_bar_table_context(web_module_data, ctx)
     use_join = _uses_attention_join(web_module_data)
     where_sql, params = _build_where_sql(web_module_data, ctx, use_join)
     order_sql = _build_order_sql(web_module_data, sort_col, sort_dir, use_join, ctx)
@@ -196,7 +213,7 @@ def _build_list_sql(
 
 
 def _build_count_sql(web_module_data, ctx: dict):
-    table = web_module_data.table_name
+    table, ctx = _resolve_bar_table_context(web_module_data, ctx)
     use_join = _uses_attention_join(web_module_data)
     where_sql, params = _build_where_sql(web_module_data, ctx, use_join)
     if use_join:

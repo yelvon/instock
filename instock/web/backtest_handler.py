@@ -79,12 +79,13 @@ class BacktestRunKlineApiHandler(webBase.BaseHandler, ABC):
     def get(self, run_id: str):
         self.set_header("Content-Type", "application/json;charset=UTF-8")
         code = (self.get_argument("code", "") or "").strip()
+        period = (self.get_argument("period", "daily") or "daily").strip()
         if not code:
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": "缺少 code"}, ensure_ascii=False))
             return
         try:
-            out = svc.get_run_kline_chart(run_id, code)
+            out = svc.get_run_kline_chart(run_id, code, period=period)
             self.write(json.dumps(out, ensure_ascii=False))
         except ValueError as e:
             self.set_status(404 if "不存在" in str(e) else 400)

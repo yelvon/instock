@@ -35,6 +35,13 @@ interface TableMetaOk {
   requires_view_filter?: boolean;
 }
 
+export interface TableFiltersPayload {
+  code: string;
+  dateFrom: string;
+  dateTo: string;
+  adjustType: string;
+}
+
 const props = withDefaults(
   defineProps<{
     fixedTableName?: string;
@@ -46,6 +53,19 @@ const props = withDefaults(
     defaultViewMode: "cross_section",
   }
 );
+
+const emit = defineEmits<{
+  filtersChange: [filters: TableFiltersPayload];
+}>();
+
+function emitFiltersChange() {
+  emit("filtersChange", {
+    code: codeStr.value.trim(),
+    dateFrom: dateFromStr.value,
+    dateTo: dateToStr.value,
+    adjustType: adjustType.value || "raw",
+  });
+}
 
 const route = useRoute();
 const router = useRouter();
@@ -235,6 +255,7 @@ async function loadTableRows(
       rows.value = parsed;
       totalRows.value = parsed.length;
       page.value = 1;
+      emitFiltersChange();
       return;
     }
 
@@ -245,6 +266,7 @@ async function loadTableRows(
     totalRows.value = parsed.total ?? parsed.rows.length;
     page.value = parsed.page ?? pageNum;
     if (parsed.page_size) pageSize.value = parsed.page_size;
+    emitFiltersChange();
   } catch (e) {
     if (ac.signal.aborted || reqId !== rowsReqId) return;
     rows.value = [];
@@ -317,16 +339,16 @@ function retryMeta() {
 }
 
 function reloadData() {
-  if (tableName.value && dateStr.value) {
-    void loadTableRows(tableName.value, dateStr.value, page.value);
-  }
+  if (!tableName.value || !meta.value || !canLoadRows()) return;
+  const d = viewMode.value === "series" ? "" : dateStr.value;
+  void loadTableRows(tableName.value, d, page.value);
 }
 
 function onPageChange(p: number) {
   page.value = p;
-  if (tableName.value && dateStr.value) {
-    void loadTableRows(tableName.value, dateStr.value, p);
-  }
+  if (!tableName.value || !meta.value || !canLoadRows()) return;
+  const d = viewMode.value === "series" ? "" : dateStr.value;
+  void loadTableRows(tableName.value, d, p);
 }
 
 const showMetaError = computed(() => !!metaError.value && !meta.value);

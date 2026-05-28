@@ -33,6 +33,7 @@ import instock.web.vue_spa_handler as vueSpaHandler
 import instock.web.nav_api_handler as navApiHandler
 import instock.web.table_meta_handler as tableMetaHandler
 import instock.web.backtest_handler as backtestHandler
+import instock.web.canonical_kline_handler as canonicalKlineHandler
 import instock.web.host_ops_handler as hostOpsHandler
 import tornado.web
 
@@ -79,6 +80,7 @@ class Application(tornado.web.Application):
             (r"/instock/api/nav", navApiHandler.NavApiHandler),
             (r"/instock/api/table_meta", tableMetaHandler.TableMetaHandler),
             (r"/instock/api/kline_bundle", tableMetaHandler.KlineBundleApiHandler),
+            (r"/instock/api/canonical/kline", canonicalKlineHandler.CanonicalKlineApiHandler),
             (r"/instock/api/backtest/strategies", backtestHandler.BacktestStrategiesApiHandler),
             (r"/instock/api/backtest/runs", backtestHandler.BacktestRunsApiHandler),
             (r"/instock/api/backtest/runs/([^/]+)/kline", backtestHandler.BacktestRunKlineApiHandler),

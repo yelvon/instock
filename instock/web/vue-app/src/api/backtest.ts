@@ -131,6 +131,7 @@ export interface BacktestKlinePayload {
   ok: boolean;
   code: string;
   adjustType: string;
+  period?: "daily" | "weekly" | "monthly";
   dateFrom: string;
   dateTo: string;
   dates: string[];
@@ -143,9 +144,10 @@ export interface BacktestKlinePayload {
 
 export async function getBacktestRunKline(
   runId: string,
-  code: string
+  code: string,
+  period: "daily" | "weekly" | "monthly" = "daily"
 ): Promise<BacktestKlinePayload> {
-  const q = new URLSearchParams({ code });
+  const q = new URLSearchParams({ code, period });
   return $api<BacktestKlinePayload>(
     `/instock/api/backtest/runs/${encodeURIComponent(runId)}/kline?${q.toString()}`
   );
