@@ -72,11 +72,28 @@ export interface BacktestCreatePayload {
   };
 }
 
+export type StrategyCategory = "technical" | "screening" | "baseline" | "plugin";
+
+export interface StrategyParamDef {
+  key: string;
+  label: string;
+  type: "int" | "float" | "str" | "bool" | string;
+  default?: number | string | boolean | null;
+  min?: number;
+  max?: number;
+  required?: boolean;
+}
+
 export interface BacktestStrategyItem {
   id: string;
   title: string;
   description: string;
+  category?: StrategyCategory;
+  tags?: string[];
+  deprecated?: boolean;
+  source?: string;
   paramSchema: Record<string, number | string | boolean>;
+  params?: StrategyParamDef[];
 }
 
 export async function listBacktestStrategies(): Promise<BacktestStrategyItem[]> {

@@ -13,7 +13,13 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from instock.core.backtest.registry import ensure_registry, list_strategies, run_backtest
+from instock.core.backtest.registry import (
+    ensure_registry,
+    list_strategies,
+    reset_registry_for_tests,
+    run_backtest,
+    validate_params,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STORE_DIR = _REPO_ROOT / "instock" / "log" / "backtest_runs"
@@ -228,6 +234,14 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
 
 def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str, Any]:
     _load_history()
+    ensure_registry()
+    strategy = payload.get("strategy") or {}
+    strategy_id = (strategy.get("id") or "moving_average_cross").strip()
+    raw_params = strategy.get("params") or {}
+    if not isinstance(raw_params, dict):
+        raise ValueError("strategy.params 必须为对象")
+    validate_params(strategy_id, raw_params)
+
     data_opts = payload.get("data") or {}
     if bool(data_opts.get("requirePrerequisites", True)):
         try:
@@ -416,6 +430,7 @@ def delete_run(run_id: str) -> Dict[str, Any]:
 
 
 def reset_for_tests() -> None:
+    reset_registry_for_tests()
     with _LOCK:
         _RUNS.clear()
     if _STORE_DIR.exists():

@@ -32,8 +32,9 @@
 | 前端 | **回测数据管理** `/backtest-data`（概览/标准日线/补数/缺口）；任务中心 `MootdxLocalPanel`；回测 `/backtest` |
 | 回测严格检查 | `profile=backtest` 时查 `canonical_daily_bar`，不默认要求 `cn_stock_spot` |
 | **撮合回测引擎** | `instock/core/backtest/`：`Cerebro` + `SimBroker` + `StrategyRegistry`；API `POST/GET /instock/api/backtest/runs`、`GET /instock/api/backtest/strategies` |
-| 内置策略 id | `moving_average_cross`（默认）、`buy_and_hold`、`screening_bridge`（需完整依赖注册） |
-| 自定义策略 | `instock/core/backtest/strategies/plugins/` + `register()`；见 [docs/plan/自定义回测策略.md](./docs/plan/自定义回测策略.md) |
+| 内置策略 id | 基准 `buy_and_hold`；技术 `moving_average_cross`（默认）、`rsi_reversal`、`macd_cross`、`bollinger_breakout`；选股 `screening_bridge` + `screening_cn_stock_strategy_*`（需 talib 等完整依赖） |
+| 策略目录 | `strategies/builtins_catalog.py` + `strategy_meta.ParamDef`；见 [docs/plan/回测策略目录.md](./docs/plan/回测策略目录.md) |
+| 自定义策略 | `strategies/plugins/` + `register()`；见 [docs/plan/自定义回测策略.md](./docs/plan/自定义回测策略.md) |
 
 **旧路径仍存**：`instock/cache/hist/` pickle；新补数作业应写 `cn_stock_daily_bar`，不要假设只写 cache。
 

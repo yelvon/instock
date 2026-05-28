@@ -4,14 +4,22 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import pkgutil
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type
 
 from instock.core.backtest.strategy import Strategy
-from instock.core.backtest.strategies.buy_and_hold import BuyAndHoldStrategy
-from instock.core.backtest.strategies.moving_average import MovingAverageCrossStrategy
+from instock.core.backtest.strategy_meta import (
+    ParamDef,
+    normalize_param_schema,
+    param_defaults_dict,
+    validate_strategy_params,
+)
+from instock.core.backtest.strategies.builtins_catalog import iter_builtin_catalog
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,7 +28,12 @@ class StrategyMeta:
     title: str
     description: str
     strategy_cls: Type[Strategy]
+    category: str = "technical"
+    tags: List[str] = field(default_factory=list)
+    params: List[ParamDef] = field(default_factory=list)
     param_schema: Dict[str, Any] = field(default_factory=dict)
+    deprecated: bool = False
+    source: str = "builtin"
 
 
 _REGISTRY: Dict[str, StrategyMeta] = {}
@@ -33,66 +46,93 @@ def register(
     *,
     title: str = "",
     description: str = "",
-    param_schema: Optional[Dict[str, Any]] = None,
+    param_schema: Optional[Any] = None,
+    category: str = "plugin",
+    tags: Optional[List[str]] = None,
+    deprecated: bool = False,
+    source: str = "plugin",
+    param_defs: Optional[List[ParamDef]] = None,
 ) -> None:
+    params = param_defs if param_defs is not None else normalize_param_schema(
+        param_schema, strategy_cls=strategy_cls
+    )
     _REGISTRY[strategy_id] = StrategyMeta(
         id=strategy_id,
         title=title or strategy_id,
         description=description,
         strategy_cls=strategy_cls,
-        param_schema=param_schema or dict(getattr(strategy_cls, "default_params", {})),
+        category=category,
+        tags=list(tags or []),
+        params=params,
+        param_schema=param_defaults_dict(params),
+        deprecated=deprecated,
+        source=source,
     )
 
 
-def get(strategy_id: str) -> Type[Strategy]:
+def register_catalog_entry(entry: Any) -> None:
+    register(
+        entry.strategy_id,
+        entry.strategy_cls,
+        title=entry.title,
+        description=entry.description,
+        category=entry.category,
+        tags=entry.tags,
+        param_defs=entry.param_defs,
+        source="builtin",
+    )
+
+
+def get_meta(strategy_id: str) -> StrategyMeta:
     meta = _REGISTRY.get(strategy_id)
     if meta is None:
         raise ValueError(f"未知策略: {strategy_id}")
-    return meta.strategy_cls
+    return meta
+
+
+def get(strategy_id: str) -> Type[Strategy]:
+    return get_meta(strategy_id).strategy_cls
 
 
 def list_strategies() -> List[Dict[str, Any]]:
-    return [
-        {
-            "id": m.id,
-            "title": m.title,
-            "description": m.description,
-            "paramSchema": m.param_schema,
-        }
-        for m in _REGISTRY.values()
-    ]
-
-
-def _register_builtins() -> None:
-    register(
-        MovingAverageCrossStrategy.strategy_id,
-        MovingAverageCrossStrategy,
-        title="双均线交叉",
-        description="快线上穿慢线买入，下穿卖出；T 日信号 T+1 开盘成交。",
-        param_schema={"fast": 5, "slow": 20},
-    )
-    register(
-        BuyAndHoldStrategy.strategy_id,
-        BuyAndHoldStrategy,
-        title="买入持有",
-        description="各标的在首个有 bar 的交易日等权买入并持有。",
-        param_schema={},
-    )
-    try:
-        from instock.core.backtest.strategies.screening_bridge import ScreeningBridgeStrategy
-
-        register(
-            ScreeningBridgeStrategy.strategy_id,
-            ScreeningBridgeStrategy,
-            title="选股桥接",
-            description="调用 tablestructure 内置 check_* 选股函数，命中则次日买入。",
-            param_schema={"strategy_table": "cn_stock_strategy_enter"},
+    items = []
+    for m in _REGISTRY.values():
+        items.append(
+            {
+                "id": m.id,
+                "title": m.title,
+                "description": m.description,
+                "category": m.category,
+                "tags": m.tags,
+                "deprecated": m.deprecated,
+                "source": m.source,
+                "paramSchema": dict(m.param_schema),
+                "params": [p.to_dict() for p in m.params],
+            }
         )
-    except ImportError:
-        pass
+    items.sort(key=lambda x: (x.get("category") or "", x.get("title") or ""))
+    return items
+
+
+def validate_params(strategy_id: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    ensure_registry()
+    meta = get_meta(strategy_id)
+    if meta.deprecated:
+        raise ValueError(f"策略已下线: {strategy_id}")
+    return validate_strategy_params(strategy_id, params, meta)
+
+
+def _register_from_catalog() -> None:
+    for entry in iter_builtin_catalog():
+        register_catalog_entry(entry)
 
 
 def _load_plugins() -> None:
+    strict = os.environ.get("INSTOCK_STRATEGY_PLUGINS_STRICT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     plugins_pkg = "instock.core.backtest.strategies.plugins"
     try:
         pkg = importlib.import_module(plugins_pkg)
@@ -106,8 +146,11 @@ def _load_plugins() -> None:
             continue
         try:
             importlib.import_module(mod.name)
-        except Exception:
-            continue
+        except Exception as e:
+            msg = f"回测策略插件加载失败: {mod.name}: {e}"
+            if strict:
+                raise RuntimeError(msg) from e
+            logger.warning(msg)
     extra = os.environ.get("INSTOCK_STRATEGY_PLUGINS", "").strip()
     if extra:
         for mod_path in extra.split(","):
@@ -116,17 +159,26 @@ def _load_plugins() -> None:
                 continue
             try:
                 importlib.import_module(mod_path)
-            except Exception:
-                continue
+            except Exception as e:
+                msg = f"回测策略插件加载失败: {mod_path}: {e}"
+                if strict:
+                    raise RuntimeError(msg) from e
+                logger.warning(msg)
 
 
 def ensure_registry() -> None:
     global _INITIALIZED
     if _INITIALIZED:
         return
-    _register_builtins()
+    _register_from_catalog()
     _load_plugins()
     _INITIALIZED = True
+
+
+def reset_registry_for_tests() -> None:
+    global _INITIALIZED
+    _REGISTRY.clear()
+    _INITIALIZED = False
 
 
 def run_backtest(
@@ -144,9 +196,11 @@ def run_backtest(
     max_weight_per_symbol: float = 0.1,
 ) -> Dict[str, Any]:
     ensure_registry()
+    merged_params = validate_params(strategy_id, strategy_params)
     from instock.core.backtest.cerebro import Cerebro
 
     cls = get(strategy_id)
+    meta = get_meta(strategy_id)
     cerebro = (
         Cerebro(
             run_id=run_id,
@@ -158,7 +212,12 @@ def run_backtest(
             transfer_fee_rate=transfer_fee_rate,
             max_weight_per_symbol=max_weight_per_symbol,
         )
-        .add_strategy(cls, strategy_params)
+        .add_strategy(cls, merged_params)
         .set_bars(bars_by_code)
     )
-    return cerebro.run()
+    result = cerebro.run()
+    if isinstance(result.get("params"), dict):
+        result["params"]["strategy"] = strategy_id
+        result["params"]["strategyTitle"] = meta.title
+        result["params"]["strategyParams"] = merged_params
+    return result

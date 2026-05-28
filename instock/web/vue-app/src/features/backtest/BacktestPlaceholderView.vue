@@ -24,7 +24,13 @@ import {
   type BacktestRunDetail,
   type BacktestRunListItem,
   type BacktestStrategyItem,
+  type StrategyParamDef,
 } from "@/api/backtest";
+import {
+  groupedStrategies,
+  strategyParamsFromItem,
+  validateStrategyParamsClient,
+} from "@/utils/strategyForm";
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent]);
 
@@ -99,10 +105,34 @@ const selectedStrategy = computed(() =>
   strategies.value.find((s) => s.id === strategyId.value)
 );
 
+const strategyGroups = computed(() => groupedStrategies(strategies.value));
+
+const strategyDetailLabel = computed(() => {
+  const p = detail.value?.params as Record<string, unknown> | undefined;
+  if (!p) return "";
+  const title = p.strategyTitle as string | undefined;
+  const id = p.strategy as string | undefined;
+  if (title && id) return `${title}（${id}）`;
+  return String(title || id || "");
+});
+
+const paramDefs = computed((): StrategyParamDef[] => {
+  const s = selectedStrategy.value;
+  if (!s) return [];
+  if (s.params?.length) return s.params;
+  return Object.entries(s.paramSchema || {}).map(([key, defaultVal]) => ({
+    key,
+    label: key,
+    type: typeof defaultVal === "number" ? "float" : typeof defaultVal === "boolean" ? "bool" : "str",
+    default: defaultVal,
+    required: true,
+  }));
+});
+
 function applyStrategyDefaults(id: string) {
   const s = strategies.value.find((x) => x.id === id);
   if (!s) return;
-  strategyParams.value = { ...(s.paramSchema || {}) };
+  strategyParams.value = strategyParamsFromItem(s);
   if (!form.value.title || form.value.title.endsWith("回测")) {
     form.value.title = `${s.title}回测`;
   }
@@ -186,6 +216,15 @@ async function loadDetail(id: string) {
 async function submitRun() {
   if (!codes().length) {
     ElMessage.warning("请至少输入一个股票代码");
+    return;
+  }
+  const err = validateStrategyParamsClient(
+    strategyId.value,
+    strategyParams.value,
+    paramDefs.value
+  );
+  if (err) {
+    ElMessage.warning(err);
     return;
   }
   submitting.value = true;
@@ -413,31 +452,44 @@ void loadStrategies();
               placeholder="选择策略"
               style="width: 100%"
             >
-              <el-option
-                v-for="s in strategies"
-                :key="s.id"
-                :label="`${s.title} (${s.id})`"
-                :value="s.id"
-              />
+              <el-option-group
+                v-for="g in strategyGroups"
+                :key="g.category"
+                :label="g.label"
+              >
+                <el-option
+                  v-for="s in g.items"
+                  :key="s.id"
+                  :label="s.title"
+                  :value="s.id"
+                  :disabled="!!s.deprecated"
+                >
+                  <span>{{ s.title }}</span>
+                  <span class="opt-id muted">{{ s.id }}</span>
+                </el-option>
+              </el-option-group>
             </el-select>
             <p v-if="selectedStrategy?.description" class="field-hint">
               {{ selectedStrategy.description }}
             </p>
           </el-form-item>
-          <el-row v-if="Object.keys(strategyParams).length" :gutter="8" class="param-row">
-            <el-col
-              v-for="(val, key) in strategyParams"
-              :key="key"
-              :span="12"
-            >
-              <el-form-item :label="String(key)">
+          <el-row v-if="paramDefs.length" :gutter="8" class="param-row">
+            <el-col v-for="p in paramDefs" :key="p.key" :span="12">
+              <el-form-item :label="p.label">
                 <el-input-number
-                  v-if="typeof val === 'number'"
-                  v-model="strategyParams[key] as number"
-                  :step="key.includes('rate') || key.includes('threshold') ? 0.01 : 1"
+                  v-if="p.type === 'int' || p.type === 'float'"
+                  v-model="strategyParams[p.key] as number"
+                  :min="p.min"
+                  :max="p.max"
+                  :precision="p.type === 'int' ? 0 : 2"
+                  :step="p.type === 'float' ? 0.01 : 1"
                   style="width: 100%"
                 />
-                <el-input v-else v-model="strategyParams[key] as string" />
+                <el-switch
+                  v-else-if="p.type === 'bool'"
+                  v-model="strategyParams[p.key] as boolean"
+                />
+                <el-input v-else v-model="strategyParams[p.key] as string" />
               </el-form-item>
             </el-col>
           </el-row>
@@ -599,8 +651,8 @@ void loadStrategies();
               {{ detail.status }}
             </el-tag>
             <el-text type="info">{{ detail.dateFrom }} ~ {{ detail.dateTo }}</el-text>
-            <el-text v-if="detail.params?.strategy" type="info" size="small">
-              策略 {{ detail.params.strategy }}
+            <el-text v-if="strategyDetailLabel" type="info" size="small">
+              策略 {{ strategyDetailLabel }}
             </el-text>
           </el-space>
         </div>
@@ -703,7 +755,7 @@ void loadStrategies();
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="run_id">{{ detail.id }}</el-descriptions-item>
             <el-descriptions-item label="状态">{{ detail.status }}</el-descriptions-item>
-            <el-descriptions-item label="策略">{{ detail.params?.strategy }}</el-descriptions-item>
+            <el-descriptions-item label="策略">{{ strategyDetailLabel || detail.params?.strategy }}</el-descriptions-item>
             <el-descriptions-item label="价格口径">
               {{ priceModeLabel(detail.params?.priceMode) }}
               <span class="muted">({{ detail.params?.priceMode || "raw" }})</span>
@@ -803,6 +855,10 @@ void loadStrategies();
 }
 .muted {
   color: var(--el-text-color-secondary);
+}
+.opt-id {
+  margin-left: 8px;
+  font-size: 11px;
 }
 .gap-box {
   font-size: 12px;
