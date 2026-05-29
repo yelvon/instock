@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
+import { goBars, goGaps, goIngest, goOps } from "@/utils/navLinks";
 
 interface CanonicalSummary {
   ready?: boolean;
@@ -96,19 +97,19 @@ onMounted(() => void load());
         <el-table-column prop="c" label="行数" />
       </el-table>
       <el-space wrap class="mt">
-        <el-button type="primary" @click="router.push('/backtest-data/bars')">
+        <el-button type="primary" @click="goBars(router)">
           浏览标准日线
         </el-button>
-        <el-button @click="router.push('/backtest-data/ingest')">补数</el-button>
-        <el-button @click="router.push('/backtest-data/gaps')">缺口诊断</el-button>
-        <el-button @click="router.push('/jobs')">任务中心（派生 qfq）</el-button>
+        <el-button @click="goIngest(router)">补数</el-button>
+        <el-button @click="goGaps(router)">缺口诊断</el-button>
+        <el-button @click="goOps(router, 'jobs')">数据运维 · 派生 qfq</el-button>
       </el-space>
       <el-alert
         class="mt"
         type="info"
         :closable="false"
         show-icon
-        title="首次前复权请在任务中心运行「派生前复权」--mode full，或「一键：通达信本地+前复权」。raw 补数成功后可自动增量派生（INSTOCK_AUTO_DERIVE_QFQ=1）。"
+        title="首次前复权请在数据运维运行「派生前复权」--mode full，或「一键：通达信本地+前复权」。raw 补数成功后可自动增量派生（INSTOCK_AUTO_DERIVE_QFQ=1）。"
       />
     </template>
   </el-card>

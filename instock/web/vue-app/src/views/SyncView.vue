@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
+import { goOps } from "@/utils/navLinks";
+
+const props = withDefaults(
+  defineProps<{
+    embedded?: boolean;
+  }>(),
+  { embedded: false }
+);
 
 const router = useRouter();
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
@@ -1079,16 +1087,24 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <PageShell
-    title="数据同步"
-    subtitle="Cookie、缺口快检与快照偏好。定时任务、执行记录与 data_batch 血缘请使用侧栏「任务中心」。"
+  <component
+    :is="props.embedded ? 'div' : PageShell"
+    v-bind="
+      props.embedded
+        ? { class: 'sync-embedded' }
+        : {
+            title: '数据同步',
+            subtitle:
+              'Cookie、缺口快检与快照偏好。定时任务、执行记录与 data_batch 血缘请使用侧栏「数据运维」。',
+          }
+    "
   >
     <div class="sync-page">
     <el-alert type="success" show-icon :closable="false" class="block">
       <template #title>通达信本地 K 线（vipdoc）</template>
       <template #default>
         已配置 <code>INSTOCK_TDX_DIR</code> 时，请在
-        <el-button link type="primary" @click="router.push({ path: '/jobs', query: { tab: 'mootdx' } })">
+        <el-button link type="primary" @click="goOps(router, 'mootdx')">
           任务中心 → 通达信本地
         </el-button>
         一键扫描代码表并补标准库；本页仍负责 Cookie、东财快照与其它数据源预设。
@@ -1589,7 +1605,7 @@ docker exec InStock printenv INSTOCK_TDX_DIR   # 应输出 /tdx</pre>
       </el-row>
     </el-card>
     </div>
-  </PageShell>
+  </component>
 </template>
 
 <style scoped>

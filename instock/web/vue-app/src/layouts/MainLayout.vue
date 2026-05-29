@@ -3,12 +3,13 @@ import { computed, ref, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   HomeFilled,
-  Download,
   DataLine,
   Histogram,
-  Timer,
-  Coin,
+  Setting,
+  Search,
 } from "@element-plus/icons-vue";
+import AppBreadcrumb from "@/components/ui/AppBreadcrumb.vue";
+import { goOps } from "@/utils/navLinks";
 
 const route = useRoute();
 const router = useRouter();
@@ -24,10 +25,38 @@ interface NavGroup {
 }
 
 const navGroups = ref<NavGroup[]>([]);
+const navFilter = ref("");
+
+const filteredNavGroups = computed(() => {
+  const q = navFilter.value.trim().toLowerCase();
+  if (!q) return navGroups.value;
+  return navGroups.value
+    .map((g) => ({
+      ...g,
+      items: g.items.filter((it) => it.name.toLowerCase().includes(q)),
+    }))
+    .filter((g) => g.items.length > 0);
+});
 
 const menuActive = computed(() => {
   const p = route.path;
   if (p === "/" || p === "/home") return "/home";
+  if (p.startsWith("/ops")) return "/ops";
+  if (p.startsWith("/backtest/data")) return "/backtest/data/overview";
+  if (p.startsWith("/backtest/run")) return "/backtest/run";
+  if (p.startsWith("/backtest")) return "/backtest/run";
+  if (route.name === "table") {
+    const tn = route.query.table_name;
+    if (typeof tn === "string" && tn) {
+      for (const g of navGroups.value) {
+        for (const it of g.items) {
+          if (it.url.includes(`table_name=${tn}`)) return it.url;
+        }
+      }
+    }
+    return "/table";
+  }
+  if (route.name === "indicators") return route.fullPath;
   return p;
 });
 
@@ -47,7 +76,6 @@ type SpaNavTarget =
   | string
   | { name: "table"; query?: { table_name: string } };
 
-/** 将经典 /instock/data?... 转为 SPA 路由 */
 function legacyUrlToSpaPath(url: string): SpaNavTarget | null {
   try {
     const u = new URL(url, window.location.origin);
@@ -84,20 +112,16 @@ function onMenuSelect(index: string) {
     void router.push("/home");
     return;
   }
-  if (index === "/sync") {
-    void router.push("/sync");
+  if (index === "/ops") {
+    goOps(router, "quick");
     return;
   }
-  if (index === "/jobs") {
-    void router.push("/jobs");
+  if (index === "/backtest/data/overview") {
+    void router.push("/backtest/data/overview");
     return;
   }
-  if (index === "/backtest-data") {
-    void router.push("/backtest-data");
-    return;
-  }
-  if (index === "/backtest") {
-    void router.push("/backtest");
+  if (index === "/backtest/run") {
+    void router.push("/backtest/run");
     return;
   }
   if (index.startsWith("http://") || index.startsWith("https://")) {
@@ -124,28 +148,45 @@ function onMenuSelect(index: string) {
           active-text-color="#79bbff"
           @select="onMenuSelect"
         >
+          <div class="menu-group-title">工作台</div>
           <el-menu-item index="/home">
             <el-icon><HomeFilled /></el-icon>
             <span>首页</span>
           </el-menu-item>
-          <el-menu-item index="/sync">
-            <el-icon><Download /></el-icon>
-            <span>数据同步</span>
-          </el-menu-item>
-          <el-menu-item index="/jobs">
-            <el-icon><Timer /></el-icon>
-            <span>任务中心</span>
-          </el-menu-item>
-          <el-menu-item index="/backtest-data">
-            <el-icon><Coin /></el-icon>
-            <span>回测数据管理</span>
-          </el-menu-item>
-          <el-menu-item index="/backtest">
-            <el-icon><Histogram /></el-icon>
-            <span>回测</span>
+
+          <div class="menu-group-title">数据运维</div>
+          <el-menu-item index="/ops">
+            <el-icon><Setting /></el-icon>
+            <span>数据运维</span>
           </el-menu-item>
 
-          <el-sub-menu v-for="g in navGroups" :key="g.type" :index="'g:' + g.type">
+          <div class="menu-group-title">策略回测</div>
+          <el-menu-item index="/backtest/data/overview">
+            <el-icon><Histogram /></el-icon>
+            <span>准备数据</span>
+          </el-menu-item>
+          <el-menu-item index="/backtest/run">
+            <el-icon><Histogram /></el-icon>
+            <span>运行回测</span>
+          </el-menu-item>
+
+          <div class="menu-group-title nav-browse-head">
+            <span>数据浏览</span>
+          </div>
+          <div class="nav-search">
+            <el-input
+              v-model="navFilter"
+              size="small"
+              placeholder="筛选表名"
+              clearable
+              :prefix-icon="Search"
+            />
+          </div>
+          <el-sub-menu
+            v-for="g in filteredNavGroups"
+            :key="g.type"
+            :index="'g:' + g.type"
+          >
             <template #title>
               <span>{{ g.type }}</span>
             </template>
@@ -157,6 +198,7 @@ function onMenuSelect(index: string) {
       </el-scrollbar>
     </el-aside>
     <el-main class="main">
+      <AppBreadcrumb />
       <router-view />
     </el-main>
   </el-container>
@@ -183,6 +225,20 @@ function onMenuSelect(index: string) {
 }
 .side-menu {
   border-right: none;
+}
+.menu-group-title {
+  padding: 14px 20px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6b7c93;
+}
+.nav-browse-head {
+  padding-top: 10px;
+}
+.nav-search {
+  padding: 0 12px 8px;
 }
 .main {
   padding: 16px 20px 32px;

@@ -29,7 +29,7 @@
 | 按源拉取 | `instock/core/canonical/source_fetch.py`、`instock/job/sync_bars_source_job.py` |
 | Provider 注册 | `instock/core/data/registry.yaml` + `providers/`（含 `mootdx_local`、`akshare`、`tushare` 等） |
 | 治理 API | `/instock/api/sync/canonical`、`data_sources_service.py` |
-| 前端 | **回测数据管理** `/backtest-data`（概览/标准日线/补数/缺口）；任务中心 `MootdxLocalPanel`；回测 `/backtest` |
+| 前端 | **数据运维** `/ops`；**准备数据** `/backtest/data/*`；**运行回测** `/backtest/run`；`MootdxLocalPanel`；`utils/navLinks.ts` |
 | 回测严格检查 | `profile=backtest` 时查 `canonical_daily_bar`，不默认要求 `cn_stock_spot` |
 | **撮合回测引擎** | `instock/core/backtest/`：`Cerebro` + `SimBroker` + `StrategyRegistry`；API `POST/GET /instock/api/backtest/runs`、`GET /instock/api/backtest/strategies` |
 | 内置策略 id | 基准 `buy_and_hold`；技术 `moving_average_cross`（默认）、`rsi_reversal`、`macd_cross`、`bollinger_breakout`；选股 `screening_bridge` + `screening_cn_stock_strategy_*`（需 talib 等完整依赖） |

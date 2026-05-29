@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { ArrowLeft } from "@element-plus/icons-vue";
 import { use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { LineChart } from "echarts/charts";
@@ -31,10 +32,19 @@ import {
   strategyParamsFromItem,
   validateStrategyParamsClient,
 } from "@/utils/strategyForm";
+import {
+  goBacktestGuide,
+  goBacktestRun,
+  goBars,
+  goGaps,
+  goIngest,
+  goOps,
+} from "@/utils/navLinks";
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent]);
 
 const router = useRouter();
+const route = useRoute();
 const runs = ref<BacktestRunListItem[]>([]);
 const selectedId = ref("");
 const detail = ref<BacktestRunDetail | null>(null);
@@ -44,6 +54,16 @@ const submitting = ref(false);
 const precheckLoading = ref(false);
 const syncSubmitting = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+const formCollapse = ref(["strategy"]);
+const resultTab = ref("overview");
+const viewMode = ref<"list" | "detail">("list");
+const isNarrow = ref(false);
+let narrowMql: MediaQueryList | null = null;
+
+function onNarrowChange(e: MediaQueryListEvent | MediaQueryList) {
+  isNarrow.value = e.matches;
+  if (!e.matches) viewMode.value = "list";
+}
 
 interface HealthRemediation {
   id?: string;
@@ -195,8 +215,9 @@ async function loadRuns() {
   loading.value = true;
   try {
     runs.value = await listBacktestRuns();
-    if (!selectedId.value && runs.value[0]?.id) {
-      selectedId.value = runs.value[0].id;
+    const rid = String(route.query.runId || "");
+    if (rid && runs.value.some((r) => r.id === rid)) {
+      selectedId.value = rid;
     }
   } finally {
     loading.value = false;
@@ -231,11 +252,11 @@ async function submitRun() {
   createGapReport.value = null;
   try {
     const run = await createBacktestRun(buildPayload());
-    selectedId.value = run.id;
+    selectRun(run.id);
     await loadRuns();
     await loadDetail(run.id);
     ElMessage.success("回测任务已创建");
-    document.getElementById("bt-results-anchor")?.scrollIntoView({ behavior: "smooth" });
+    resultTab.value = "overview";
   } catch (e: unknown) {
     const err = e as { data?: Record<string, unknown>; message?: string };
     if (err.data?.error === "BACKTEST_DATA_GAP") {
@@ -309,8 +330,8 @@ async function triggerKlineSync() {
       ElMessage.error(j.error || "触发补数失败");
       return;
     }
-    ElMessage.success("K 线补数任务已触发，可在任务中心查看进度");
-    void router.push({ path: "/jobs", query: { tab: "runs" } });
+    ElMessage.success("K 线补数任务已触发，可在数据运维查看进度");
+    goOps(router, "runs");
   } catch (e) {
     ElMessage.error(String(e));
   } finally {
@@ -318,12 +339,31 @@ async function triggerKlineSync() {
   }
 }
 
-function goBacktestData(tab: "ingest" | "gaps" | "bars" = "ingest") {
-  void router.push(`/backtest-data/${tab}`);
+function goBacktestDataTab(tab: "ingest" | "gaps" | "bars" = "ingest") {
+  if (tab === "ingest") goIngest(router);
+  else if (tab === "gaps") goGaps(router);
+  else goBars(router);
 }
 
 function goDataSources() {
-  goBacktestData("ingest");
+  goIngest(router);
+}
+
+function selectRun(id: string) {
+  selectedId.value = id;
+  goBacktestRun(router, id);
+  if (isNarrow.value) viewMode.value = "detail";
+}
+
+function clearSelection() {
+  selectedId.value = "";
+  detail.value = null;
+  goBacktestRun(router);
+  if (isNarrow.value) viewMode.value = "list";
+}
+
+function backToList() {
+  viewMode.value = "list";
 }
 
 const precheckMessages = computed(() => precheck.value?.backtest_prerequisites?.messages || []);
@@ -345,8 +385,7 @@ async function cancelRun(id: string) {
 async function deleteRun(id: string) {
   await deleteBacktestRun(id);
   if (selectedId.value === id) {
-    selectedId.value = "";
-    detail.value = null;
+    clearSelection();
   }
   await loadRuns();
 }
@@ -398,6 +437,21 @@ watch(selectedId, (id) => {
   if (id) void loadDetail(id);
 });
 
+watch(
+  () => route.query.runId,
+  (rid) => {
+    const id = String(rid || "");
+    if (id && id !== selectedId.value) {
+      selectedId.value = id;
+      if (isNarrow.value) viewMode.value = "detail";
+    } else if (!id && selectedId.value) {
+      selectedId.value = "";
+      detail.value = null;
+    }
+  },
+  { immediate: true }
+);
+
 watch(hasRunning, (running) => {
   if (pollTimer) {
     clearInterval(pollTimer);
@@ -424,30 +478,95 @@ async function loadStrategies() {
 }
 
 onMounted(() => {
+  narrowMql = window.matchMedia("(max-width: 1100px)");
+  isNarrow.value = narrowMql.matches;
+  narrowMql.addEventListener("change", onNarrowChange);
   void loadRuns();
   void loadStrategies();
+});
+
+onUnmounted(() => {
+  narrowMql?.removeEventListener("change", onNarrowChange);
+  if (pollTimer) clearInterval(pollTimer);
 });
 </script>
 
 <template>
   <div class="bt-page">
-    <div class="bt-grid">
-      <el-card shadow="never" class="bt-panel bt-panel-form">
+    <div
+      class="bt-master-detail"
+      :class="{ narrow: isNarrow, 'show-detail': viewMode === 'detail' }"
+    >
+      <el-card
+        v-show="!isNarrow || viewMode === 'list'"
+        shadow="never"
+        class="bt-panel bt-list-panel"
+      >
         <template #header>
           <div class="panel-head">
-            <span class="panel-title">回测配置</span>
+            <span class="panel-title">历史任务</span>
             <el-space wrap>
-              <el-button size="small" link type="primary" @click="router.push('/backtest/guide')">
-                如何添加策略
-              </el-button>
-              <el-button size="small" :loading="submitting" type="primary" @click="submitRun">
-                运行回测
-              </el-button>
+              <el-button size="small" link type="primary" @click="clearSelection">新建</el-button>
+              <el-button size="small" :loading="loading" @click="loadRuns">刷新</el-button>
             </el-space>
           </div>
         </template>
-        <el-form label-position="top" size="small" class="bt-form">
-          <el-form-item label="策略">
+        <el-table
+          :data="runs"
+          size="small"
+          :height="isNarrow ? 360 : 520"
+          highlight-current-row
+          class="runs-table"
+          :row-class-name="({ row }: { row: BacktestRunListItem }) => (row.id === selectedId ? 'is-active' : '')"
+          @row-click="(row: BacktestRunListItem) => selectRun(row.id)"
+        >
+          <el-table-column prop="status" label="状态" width="86">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.status === 'success' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">{{ row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="title" label="名称" min-width="120" />
+          <el-table-column label="收益" width="80"><template #default="{ row }">{{ pct(row.summary?.totalReturn) }}</template></el-table-column>
+          <el-table-column label="回撤" width="80"><template #default="{ row }">{{ pct(row.summary?.maxDrawdown) }}</template></el-table-column>
+          <el-table-column label="操作" width="100">
+            <template #default="{ row }">
+              <el-button v-if="row.status === 'running' || row.status === 'queued'" link type="warning" @click.stop="cancelRun(row.id)">取消</el-button>
+              <el-button link type="danger" @click.stop="deleteRun(row.id)">删</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <div v-show="!isNarrow || viewMode === 'detail'" class="bt-main-panel">
+        <el-button
+          v-if="isNarrow && viewMode === 'detail'"
+          class="back-list-btn"
+          link
+          type="primary"
+          @click="backToList"
+        >
+          <el-icon><ArrowLeft /></el-icon>
+          返回列表
+        </el-button>
+
+        <el-card v-if="!selectedId" shadow="never" class="bt-panel bt-panel-form">
+          <template #header>
+            <div class="panel-head">
+              <span class="panel-title">回测配置</span>
+              <el-space wrap>
+                <el-button size="small" link type="primary" @click="goBacktestGuide(router)">
+                  如何添加策略
+                </el-button>
+                <el-button size="small" :loading="submitting" type="primary" @click="submitRun">
+                  运行回测
+                </el-button>
+              </el-space>
+            </div>
+          </template>
+          <el-form label-position="top" size="small" class="bt-form">
+            <el-collapse v-model="formCollapse">
+              <el-collapse-item title="策略与标的" name="strategy">
+                <el-form-item label="策略">
             <el-select
               v-model="strategyId"
               filterable
@@ -514,16 +633,17 @@ onMounted(() => {
           <el-form-item label="股票代码">
             <el-input v-model="form.codesText" type="textarea" :rows="2" placeholder="600000,000001" />
           </el-form-item>
+              </el-collapse-item>
+              <el-collapse-item title="资金与费用" name="broker">
           <el-form-item label="价格口径">
             <el-radio-group v-model="form.priceMode">
               <el-radio label="raw">不复权（通达信本地 raw）</el-radio>
               <el-radio label="qfq">前复权（标准库 qfq）</el-radio>
             </el-radio-group>
             <p v-if="form.priceMode === 'qfq'" class="field-hint">
-              需先在任务中心派生前复权；可在「回测数据管理 → 概览」查看 qfq 行数。
+              需先在数据运维派生前复权；可在「准备数据 → 概览」查看 qfq 行数。
             </p>
           </el-form-item>
-          <el-divider content-position="left">资金与费用</el-divider>
           <el-row :gutter="8">
             <el-col :span="12"><el-form-item label="初始资金"><el-input-number v-model="form.initialCash" :min="10000" :step="10000" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="单票上限"><el-input-number v-model="form.maxWeightPerSymbol" :min="0.01" :max="1" :step="0.01" /></el-form-item></el-col>
@@ -532,7 +652,8 @@ onMounted(() => {
             <el-col :span="12"><el-form-item label="佣金率"><el-input-number v-model="form.commissionRate" :min="0" :step="0.0001" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="印花税"><el-input-number v-model="form.stampTaxRate" :min="0" :step="0.0001" /></el-form-item></el-col>
           </el-row>
-          <el-divider content-position="left">数据检查</el-divider>
+              </el-collapse-item>
+              <el-collapse-item title="数据检查" name="data">
           <el-form-item>
             <el-checkbox v-model="form.requirePrerequisites">严格检查标准日线完整性</el-checkbox>
           </el-form-item>
@@ -585,9 +706,9 @@ onMounted(() => {
                   }}
                 </div>
                 <el-space wrap class="mt-mini">
-                  <el-button link type="primary" @click="goBacktestData('gaps')">缺口诊断</el-button>
-                  <el-button link type="primary" @click="goBacktestData('ingest')">去补数</el-button>
-                  <el-button link type="primary" @click="goBacktestData('bars')">浏览标准日线</el-button>
+                  <el-button link type="primary" @click="goBacktestDataTab('gaps')">缺口诊断</el-button>
+                  <el-button link type="primary" @click="goBacktestDataTab('ingest')">去补数</el-button>
+                  <el-button link type="primary" @click="goBacktestDataTab('bars')">浏览标准日线</el-button>
                 </el-space>
               </div>
             </template>
@@ -603,52 +724,28 @@ onMounted(() => {
             <template #default>
               <pre class="mini-pre">{{ JSON.stringify(createGapReport, null, 2) }}</pre>
               <el-space wrap>
-                <el-button link type="primary" @click="goBacktestData('ingest')">回测数据管理 · 补数</el-button>
-                <el-button link type="primary" @click="goBacktestData('gaps')">缺口诊断</el-button>
+                <el-button link type="primary" @click="goBacktestDataTab('ingest')">准备数据 · 补数</el-button>
+                <el-button link type="primary" @click="goBacktestDataTab('gaps')">缺口诊断</el-button>
               </el-space>
             </template>
           </el-alert>
+              </el-collapse-item>
+            </el-collapse>
         </el-form>
       </el-card>
 
-      <el-card shadow="never" class="bt-panel bt-panel-runs">
-        <template #header>
-          <div class="panel-head">
-            <span class="panel-title">历史任务</span>
-            <el-button size="small" :loading="loading" @click="loadRuns">刷新</el-button>
-          </div>
-        </template>
-        <el-table
-          :data="runs"
-          size="small"
-          height="520"
-          highlight-current-row
-          class="runs-table"
-          @row-click="(row: BacktestRunListItem) => (selectedId = row.id)"
+        <el-card
+          v-else-if="detail"
+          id="bt-results-anchor"
+          v-loading="detailLoading"
+          shadow="never"
+          class="bt-results-card"
         >
-          <el-table-column prop="status" label="状态" width="86">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 'success' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">{{ row.status }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="title" label="名称" min-width="140" />
-          <el-table-column label="收益" width="92"><template #default="{ row }">{{ pct(row.summary?.totalReturn) }}</template></el-table-column>
-          <el-table-column label="回撤" width="92"><template #default="{ row }">{{ pct(row.summary?.maxDrawdown) }}</template></el-table-column>
-          <el-table-column label="操作" width="128">
-            <template #default="{ row }">
-              <el-button v-if="row.status === 'running' || row.status === 'queued'" link type="warning" @click.stop="cancelRun(row.id)">取消</el-button>
-              <el-button link type="danger" @click.stop="deleteRun(row.id)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
-    </div>
-
-    <el-card v-if="detail" id="bt-results-anchor" shadow="never" class="bt-results-card">
       <template #header>
         <div class="panel-head">
           <span class="panel-title">{{ detail.title }}</span>
           <el-space wrap>
+            <el-button size="small" link @click="clearSelection">新建回测</el-button>
             <el-tag size="small" :type="detail.status === 'success' ? 'success' : detail.status === 'failed' ? 'danger' : 'warning'">
               {{ detail.status }}
             </el-tag>
@@ -663,6 +760,15 @@ onMounted(() => {
       <el-alert v-if="detail.status === 'failed'" type="error" :closable="false" :title="typeof detail.error === 'string' ? detail.error : detail.error?.message || '回测失败'" />
 
       <template v-if="detail.status !== 'failed'">
+        <el-affix :offset="72" class="result-tabs-affix">
+          <el-tabs v-model="resultTab" class="result-tabs">
+            <el-tab-pane label="总览" name="overview" />
+            <el-tab-pane label="K 线" name="kline" />
+            <el-tab-pane label="成交与持仓" name="trades" />
+          </el-tabs>
+        </el-affix>
+
+        <div v-show="resultTab === 'overview'">
       <div class="metric-grid">
         <div class="metric-tile">
           <span class="metric-label">累计收益</span>
@@ -694,14 +800,18 @@ onMounted(() => {
         <el-col :span="14"><v-chart class="chart" :option="equityOption" autoresize /></el-col>
         <el-col :span="10"><v-chart class="chart" :option="drawdownOption" autoresize /></el-col>
       </el-row>
+        </div>
 
+        <div v-show="resultTab === 'kline'">
       <BacktestKlineChart
         v-if="detail.status === 'success'"
         :run-id="detail.id"
         :codes="detail.universe?.codes || codes()"
       />
+        </div>
 
-      <el-tabs class="mt">
+        <div v-show="resultTab === 'trades'">
+      <el-tabs class="mt inner-trade-tabs">
         <el-tab-pane label="订单记录">
           <el-table :data="detail.orders || []" size="small" height="320">
             <el-table-column prop="createdDate" label="生成日" width="110" />
@@ -767,10 +877,17 @@ onMounted(() => {
           </el-descriptions>
         </el-tab-pane>
       </el-tabs>
+        </div>
       </template>
-    </el-card>
+        </el-card>
 
-    <el-empty v-else-if="!detailLoading && !runs.length" class="bt-empty" description="暂无回测任务，请在左侧配置后点击「运行回测」" />
+        <el-empty
+          v-else-if="!detailLoading && !runs.length"
+          class="bt-empty"
+          description="暂无回测任务，请配置后点击「运行回测」"
+        />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -780,11 +897,37 @@ onMounted(() => {
   flex-direction: column;
   gap: 12px;
 }
-.bt-grid {
+.bt-master-detail {
   display: grid;
-  grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+.bt-master-detail.narrow {
+  grid-template-columns: 1fr;
+}
+.bt-main-panel {
+  min-width: 0;
+}
+.bt-list-panel :deep(.el-card__body) {
+  padding-top: 8px;
+}
+.back-list-btn {
+  margin-bottom: 8px;
+}
+.runs-table :deep(.is-active) {
+  background: rgba(64, 158, 255, 0.08);
+}
+.result-tabs-affix :deep(.el-affix--fixed) {
+  background: var(--el-bg-color);
+  padding: 4px 0;
+  z-index: 10;
+}
+.result-tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+.inner-trade-tabs {
+  margin-top: 0;
 }
 .panel-head {
   display: flex;
@@ -802,10 +945,7 @@ onMounted(() => {
   border-radius: 8px;
 }
 .bt-panel-form {
-  min-height: 520px;
-}
-.bt-panel-runs :deep(.el-card__body) {
-  padding-top: 8px;
+  min-height: 360px;
 }
 .field-hint {
   margin: 4px 0 0;

@@ -1,18 +1,36 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { goBacktestData, goBacktestGuide, goBacktestRun } from "@/utils/navLinks";
 
 const route = useRoute();
 const router = useRouter();
 
-const tabs = [
-  { path: "/backtest", label: "运行回测" },
-  { path: "/backtest/guide", label: "自定义策略" },
+const runId = computed(() => String(route.query.runId || ""));
+
+const steps = [
+  { title: "准备数据", path: "/backtest/data/overview" },
+  { title: "运行回测", path: "/backtest/run" },
+  { title: "查看结果", path: "/backtest/run" },
 ];
 
-const activeTab = computed(() =>
-  route.path.startsWith("/backtest/guide") ? "/backtest/guide" : "/backtest"
-);
+const activeStep = computed(() => {
+  if (route.path.startsWith("/backtest/data")) return 0;
+  if (route.path.startsWith("/backtest/guide")) return 1;
+  if (runId.value) return 2;
+  if (route.path.startsWith("/backtest/run")) return 1;
+  return 1;
+});
+
+function onStepClick(idx: number) {
+  const step = steps[idx];
+  if (!step) return;
+  if (idx === 2 && runId.value) {
+    goBacktestRun(router, runId.value);
+    return;
+  }
+  void router.push(step.path);
+}
 </script>
 
 <template>
@@ -25,27 +43,21 @@ const activeTab = computed(() =>
           权益曲线与订单明细
         </p>
       </div>
-      <el-space wrap>
-        <el-button plain size="small" @click="router.push('/backtest-data/overview')">
-          回测数据管理
-        </el-button>
-        <el-button type="primary" plain size="small" @click="router.push('/backtest-data/ingest')">
-          去补数
-        </el-button>
-      </el-space>
+      <el-button link type="primary" @click="goBacktestGuide(router)">
+        自定义策略
+      </el-button>
     </div>
-    <el-tabs
-      :model-value="activeTab"
-      class="bt-tabs"
-      @tab-click="(pane: { paneName: string | number }) => router.push(String(pane.paneName))"
-    >
-      <el-tab-pane
-        v-for="t in tabs"
-        :key="t.path"
-        :label="t.label"
-        :name="t.path"
-      />
-    </el-tabs>
+    <div class="bt-steps-row">
+      <el-steps :active="activeStep" finish-status="success" simple class="bt-steps">
+        <el-step
+          v-for="(s, i) in steps"
+          :key="s.title"
+          :title="s.title"
+          class="bt-step-click"
+          @click="onStepClick(i)"
+        />
+      </el-steps>
+    </div>
     <router-view />
   </div>
 </template>
@@ -77,7 +89,15 @@ const activeTab = computed(() =>
   font-size: 12px;
   color: #a8c4e8;
 }
-.bt-tabs :deep(.el-tabs__header) {
+.bt-steps-row {
   margin-bottom: 12px;
+}
+.bt-steps {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+}
+.bt-step-click {
+  cursor: pointer;
 }
 </style>

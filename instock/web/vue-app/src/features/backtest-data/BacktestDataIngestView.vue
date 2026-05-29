@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import MootdxLocalPanel from "@/features/mootdx/MootdxLocalPanel.vue";
+import { goOps } from "@/utils/navLinks";
 
 const router = useRouter();
 
 function onRunStarted() {
-  void router.push({ path: "/jobs", query: { tab: "runs" } });
+  goOps(router, "runs");
 }
 </script>
 
@@ -14,7 +15,7 @@ function onRunStarted() {
     <template #header>补数与同步</template>
     <p class="hint">
       通达信本地 vipdoc 写入标准表 <code>cn_stock_daily_bar</code>。全站作业编排仍在
-      <el-button link type="primary" @click="router.push('/jobs')">任务中心</el-button>。
+      <el-button link type="primary" @click="goOps(router, 'jobs')">数据运维</el-button>。
     </p>
     <MootdxLocalPanel :on-run-started="onRunStarted" />
   </el-card>

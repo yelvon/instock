@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { goOps } from "@/utils/navLinks";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
@@ -15,10 +16,58 @@ import {
   startMootdxProbe,
 } from "@/api/mootdxProbe";
 import MootdxLocalPanel from "@/features/mootdx/MootdxLocalPanel.vue";
+import type { OpsTab } from "@/utils/navLinks";
+
+const props = withDefaults(
+  defineProps<{
+    embedded?: boolean;
+    lockTab?: OpsTab;
+  }>(),
+  { embedded: false }
+);
 
 const router = useRouter();
 const route = useRoute();
-const activeTab = ref(String(route.query.tab || "mootdx"));
+
+function initialJobTab(): string {
+  const jobTab = String(route.query.jobTab || "");
+  if (props.embedded && jobTab) {
+    if (props.lockTab === "jobs" && ["manual", "schedule"].includes(jobTab)) return jobTab;
+    if (
+      props.lockTab === "advanced" &&
+      ["sources", "lineage", "governance"].includes(jobTab)
+    ) {
+      return jobTab;
+    }
+    if (props.lockTab === jobTab) return jobTab;
+  }
+  if (props.lockTab === "jobs") return "manual";
+  if (props.lockTab === "advanced") return "sources";
+  if (props.lockTab === "mootdx") return "mootdx";
+  if (props.lockTab === "runs") return "runs";
+  return String(route.query.tab || "mootdx");
+}
+
+const activeTab = ref(initialJobTab());
+
+const allowedTabs = computed((): string[] | null => {
+  if (!props.lockTab || props.lockTab === "quick") return null;
+  if (props.lockTab === "jobs") return ["manual", "schedule"];
+  if (props.lockTab === "advanced") return ["sources", "lineage"];
+  if (props.lockTab === "mootdx") return ["mootdx"];
+  if (props.lockTab === "runs") return ["runs"];
+  return null;
+});
+
+function tabVisible(name: string): boolean {
+  const allowed = allowedTabs.value;
+  if (!allowed) return true;
+  return allowed.includes(name);
+}
+
+const hideTabHeader = computed(
+  () => !!props.lockTab && props.lockTab !== "jobs" && props.lockTab !== "advanced"
+);
 
 interface JobItem {
   id: string;
@@ -854,7 +903,7 @@ function fmtJson(v: unknown): string {
 }
 
 watch(activeTab, (t) => {
-  if (route.query.tab !== t) {
+  if (!props.embedded && route.query.tab !== t) {
     void router.replace({ query: { ...route.query, tab: t } });
   }
   if (t === "runs") void loadRuns();
@@ -872,6 +921,7 @@ watch(batchDomain, () => void loadBatches());
 watch(
   () => route.query.tab,
   (t) => {
+    if (props.embedded) return;
     const tab = String(t || "");
     if (["manual", "mootdx", "schedule", "runs", "lineage", "sources", "governance"].includes(tab)) {
       activeTab.value = tab;
@@ -898,16 +948,24 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <PageShell
-    title="任务中心"
-    subtitle="管理定时任务、后台作业执行记录与数据血缘；Cookie 与快照偏好仍在「数据同步」页。"
+  <component
+    :is="props.embedded ? 'div' : PageShell"
+    v-bind="
+      props.embedded
+        ? { class: 'job-embedded-wrap' }
+        : {
+            title: '任务中心',
+            subtitle:
+              '管理定时任务、后台作业执行记录与数据血缘；Cookie 与快照偏好仍在「数据运维 → 快捷同步」。',
+          }
+    "
   >
     <div class="job-page">
-      <el-alert type="info" show-icon :closable="false" class="top-hint">
+      <el-alert v-if="!props.embedded" type="info" show-icon :closable="false" class="top-hint">
         <template #title>
           数据同步页负责 Cookie、缺口快检；本页负责
           <strong>定时 / 手动作业 / 执行记录 / data_batch 血缘</strong>。
-          <el-button link type="primary" @click="router.push('/sync')">前往数据同步</el-button>
+          <el-button link type="primary" @click="goOps(router, 'quick')">前往快捷同步</el-button>
         </template>
       </el-alert>
 
@@ -942,12 +1000,17 @@ onUnmounted(() => {
         <pre class="log-pre soft">{{ liveOut }}</pre>
       </el-card>
 
-      <el-tabs v-model="activeTab" type="border-card" class="main-tabs">
-        <el-tab-pane label="通达信本地" name="mootdx">
+      <el-tabs
+        v-model="activeTab"
+        type="border-card"
+        class="main-tabs"
+        :class="{ 'tabs-hide-header': hideTabHeader }"
+      >
+        <el-tab-pane v-if="tabVisible('mootdx')" label="通达信本地" name="mootdx">
           <MootdxLocalPanel @run-started="onMootdxRunStarted" />
         </el-tab-pane>
 
-        <el-tab-pane label="手动作业" name="manual">
+        <el-tab-pane v-if="tabVisible('manual')" label="手动作业" name="manual">
           <el-alert type="info" :closable="false" show-icon class="mb">
             日常 K 线补数推荐用
             <el-button link type="primary" @click="activeTab = 'mootdx'">「通达信本地」</el-button>
@@ -1099,7 +1162,7 @@ onUnmounted(() => {
           </el-form>
         </el-tab-pane>
 
-        <el-tab-pane label="定时任务" name="schedule">
+        <el-tab-pane v-if="tabVisible('schedule')" label="定时任务" name="schedule">
           <el-switch v-model="schedGlobal" active-text="启用定时总开关" class="mt" />
           <el-table :data="schedDraft" stripe border size="small" class="mt">
             <el-table-column label="启用" width="70" align="center">
@@ -1144,7 +1207,7 @@ onUnmounted(() => {
           <el-text size="small" type="info">{{ schedMsg }}</el-text>
         </el-tab-pane>
 
-        <el-tab-pane label="执行记录" name="runs">
+        <el-tab-pane v-if="tabVisible('runs')" label="执行记录" name="runs">
           <el-space class="mt">
             <el-button :icon="Refresh" size="small" @click="loadRuns">刷新</el-button>
           </el-space>
@@ -1187,7 +1250,7 @@ onUnmounted(() => {
           </el-card>
         </el-tab-pane>
 
-        <el-tab-pane label="数据源" name="sources">
+        <el-tab-pane v-if="tabVisible('sources')" label="数据源" name="sources">
           <el-space wrap class="mt">
             <el-button :icon="Refresh" :loading="dsLoading" @click="loadDataSources">刷新状态</el-button>
             <el-input v-model="verifyCode" placeholder="检测样本代码" style="width: 140px" class="mono" />
@@ -1487,7 +1550,7 @@ onUnmounted(() => {
           }}</pre>
         </el-tab-pane>
 
-        <el-tab-pane label="数据血缘" name="lineage">
+        <el-tab-pane v-if="tabVisible('lineage')" label="数据血缘" name="lineage">
           <el-card shadow="never" class="mt inner">
             <template #header>当前治理环境（只读）</template>
             <el-descriptions :column="2" size="small" border>
@@ -1559,7 +1622,7 @@ onUnmounted(() => {
         </el-tab-pane>
       </el-tabs>
     </div>
-  </PageShell>
+  </component>
 </template>
 
 <style scoped>
@@ -1573,6 +1636,9 @@ onUnmounted(() => {
 }
 .main-tabs {
   border-radius: 10px;
+}
+.main-tabs.tabs-hide-header :deep(.el-tabs__header) {
+  display: none;
 }
 .mt {
   margin-top: 12px;

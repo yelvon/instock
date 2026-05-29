@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { goBacktestRun } from "@/utils/navLinks";
 
 const route = useRoute();
 const router = useRouter();
 
 const tabs = [
-  { path: "/backtest-data/overview", label: "概览" },
-  { path: "/backtest-data/bars", label: "标准日线" },
-  { path: "/backtest-data/ingest", label: "补数" },
-  { path: "/backtest-data/gaps", label: "缺口诊断" },
+  { path: "/backtest/data/overview", label: "概览" },
+  { path: "/backtest/data/bars", label: "标准日线" },
+  { path: "/backtest/data/ingest", label: "补数" },
+  { path: "/backtest/data/gaps", label: "缺口诊断" },
 ];
 
 const activeTab = computed(() => route.path);
@@ -19,13 +20,13 @@ const activeTab = computed(() => route.path);
   <div class="btd-layout">
     <div class="btd-head">
       <div>
-        <h1 class="btd-title">回测数据管理</h1>
+        <h1 class="btd-title">准备回测数据</h1>
         <p class="btd-sub">
           日线回测以 <code>cn_stock_daily_bar</code> 为准，与每日快照
           <code>cn_stock_spot</code> 独立。
         </p>
       </div>
-      <el-button type="primary" plain size="small" @click="router.push('/backtest')">
+      <el-button type="primary" plain size="small" @click="goBacktestRun(router)">
         去运行回测
       </el-button>
     </div>
@@ -58,7 +59,7 @@ const activeTab = computed(() => route.path);
 }
 .btd-title {
   margin: 0 0 6px;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   color: #e8eef5;
 }
