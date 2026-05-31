@@ -11,12 +11,17 @@ import time
 import math
 import pandas as pd
 from instock.core.eastmoney_fetcher import eastmoney_fetcher
+from instock.core.eastmoney_push2 import clist_request
 
 __author__ = 'myh '
 __date__ = '2025/12/31 '
 
 # 创建全局实例，供所有函数使用
 fetcher = eastmoney_fetcher()
+
+
+def _clist_get(params: dict):
+    return clist_request(fetcher, params)
 
 def stock_individual_fund_flow_rank(indicator: str = "5日") -> pd.DataFrame:
     """
@@ -45,7 +50,6 @@ def stock_individual_fund_flow_rank(indicator: str = "5日") -> pd.DataFrame:
             "f12,f14,f2,f160,f174,f175,f176,f177,f178,f179,f180,f181,f182,f183,f260,f261,f124",
         ],
     }
-    url = "http://push2.eastmoney.com/api/qt/clist/get"
     page_size = 50
     page_current = 1
     params = {
@@ -60,7 +64,7 @@ def stock_individual_fund_flow_rank(indicator: str = "5日") -> pd.DataFrame:
         "fs": "m:0+t:6+f:!2,m:0+t:13+f:!2,m:0+t:80+f:!2,m:1+t:2+f:!2,m:1+t:23+f:!2,m:0+t:7+f:!2,m:1+t:3+f:!2",
         "fields": indicator_map[indicator][1],
     }
-    r = fetcher.make_request(url, params=params)
+    r = _clist_get(params)
     data_json = r.json()
     data = data_json["data"]["diff"]
     data_count = data_json["data"]["total"]
@@ -70,7 +74,7 @@ def stock_individual_fund_flow_rank(indicator: str = "5日") -> pd.DataFrame:
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r = fetcher.make_request(url, params=params)
+        r = _clist_get(params)
         data_json = r.json()
         _data = data_json["data"]["diff"]
         data.extend(_data)
@@ -269,7 +273,6 @@ def stock_sector_fund_flow_rank(
             "f12,f14,f2,f160,f174,f175,f176,f177,f178,f179,f180,f181,f182,f183,f260,f261,f124",
         ],
     }
-    url = "http://push2.eastmoney.com/api/qt/clist/get"
     page_size = 50
     page_current = 1
     params = {
@@ -288,7 +291,7 @@ def stock_sector_fund_flow_rank(
         "cb": "jQuery18308357908311220152_1589256588824",
         "_": int(time.time() * 1000),
     }
-    r = fetcher.make_request(url, params=params)
+    r = _clist_get(params)
     text_data = r.text
     data_json = json.loads(text_data[text_data.find("{") : -2])
     data = data_json["data"]["diff"]
@@ -300,7 +303,7 @@ def stock_sector_fund_flow_rank(
         time.sleep(random.uniform(1, 1.5))
         page_current = page_current + 1
         params["pn"] = page_current
-        r = fetcher.make_request(url, params=params)
+        r = _clist_get(params)
         text_data = r.text
         json_data = json.loads(text_data[text_data.find("{"): -2])
         _data = json_data["data"]["diff"]

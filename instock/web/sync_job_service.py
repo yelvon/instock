@@ -153,14 +153,14 @@ JOB_ITEMS: List[Dict[str, str]] = [
         "script": "basic_data_other_daily_job.py",
         "title": "其它基础数据",
         "hint": "龙虎榜、资金流、涨停原因等",
-        "description": "一批扩展基础数据：龙虎榜统计、分红配送、个股/行业/概念资金流、早盘抢筹、涨停原因等（详见 作业说明.md）。建议先有当日快照 cn_stock_spot 再跑，耗时可较长。",
+        "description": "扩展基础数据：龙虎榜、分红、个股/板块资金流（依赖东财 push2 clist）、早盘抢筹、涨停原因等。当前环境若 push2 不通，资金流会跳过并单行 [WARN]；与「盘后数据」无关。",
     },
     {
         "id": "basic_data_after_close_daily_job",
         "script": "basic_data_after_close_daily_job.py",
         "title": "盘后数据",
-        "hint": "收盘后才完整的数据",
-        "description": "收盘后更完整的数据流，如大宗交易、尾盘抢筹等（以源码为准）。请在收盘后或晚间运行对应日期。",
+        "hint": "大宗交易、尾盘抢筹",
+        "description": "收盘后数据：大宗交易（datacenter-web）、尾盘抢筹（通达信 icfqs）。不依赖 push2；日志会输出 [PROGRESS] rows=N。请在收盘后或晚间运行。",
     },
     {
         "id": "indicators_data_daily_job",

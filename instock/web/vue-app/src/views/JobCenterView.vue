@@ -120,6 +120,27 @@ interface ScheduleRow {
   spot_data_source: string;
 }
 
+interface SchedulerStatus {
+  enabled_globally?: boolean;
+  schedule_count?: number;
+  last_tick_at?: string;
+  tick_age_seconds?: number | null;
+  fire_history_count?: number;
+  requires_web_process?: boolean;
+}
+
+interface SchedulerFireRow {
+  id: string;
+  fired_at: string;
+  schedule_title?: string;
+  job_label?: string;
+  job_id?: string;
+  trigger_time?: string;
+  status: string;
+  run_id?: string;
+  message?: string;
+}
+
 interface BatchRow {
   batch_id: string;
   domain_id: string;
@@ -222,6 +243,8 @@ const runningLabel = ref("");
 const schedGlobal = ref(true);
 const schedDraft = ref<ScheduleRow[]>([]);
 const schedMsg = ref("");
+const schedStatus = ref<SchedulerStatus | null>(null);
+const schedFireHistory = ref<SchedulerFireRow[]>([]);
 const schTitle = ref("");
 const schTimes = ref("");
 const schSpot = ref("eastmoney");
@@ -388,6 +411,26 @@ function statusLabel(st: string) {
     running: "运行中",
   };
   return m[st] || st;
+}
+
+function fireStatusLabel(st: string) {
+  const m: Record<string, string> = {
+    triggered: "已触发",
+    failed: "触发失败",
+    skipped_duplicate: "重复跳过",
+  };
+  return m[st] || st;
+}
+
+function fireStatusType(st: string) {
+  if (st === "triggered") return "success";
+  if (st === "failed") return "danger";
+  if (st === "skipped_duplicate") return "warning";
+  return "info";
+}
+
+function triggerLabel(r: RunRow): string {
+  return r.trigger_source === "scheduler" ? "定时" : "手动";
 }
 
 async function loadJobs() {
@@ -842,11 +885,13 @@ async function deleteRun(id: string) {
 }
 
 async function loadScheduler() {
-  const r = await fetch("/instock/api/sync/scheduler");
+  const r = await fetch("/instock/api/sync/scheduler?history_limit=50");
   const j = await r.json();
   if (j.ok) {
     schedGlobal.value = j.config?.enabled_globally !== false;
     schedDraft.value = JSON.parse(JSON.stringify(j.config?.schedules || []));
+    schedStatus.value = j.status || null;
+    schedFireHistory.value = Array.isArray(j.fire_history) ? j.fire_history : [];
     schedMsg.value = "已加载";
   }
 }
@@ -890,6 +935,7 @@ async function saveScheduler() {
   });
   const j = await r.json();
   schedMsg.value = j.ok ? "已保存" : j.error || "失败";
+  if (j.ok) await loadScheduler();
 }
 
 function fmtJson(v: unknown): string {
@@ -1164,6 +1210,25 @@ onUnmounted(() => {
 
         <el-tab-pane v-if="tabVisible('schedule')" label="定时任务" name="schedule">
           <el-switch v-model="schedGlobal" active-text="启用定时总开关" class="mt" />
+          <el-alert
+            v-if="schedStatus?.requires_web_process"
+            type="info"
+            show-icon
+            :closable="false"
+            class="mt"
+            title="应用内定时依赖 Web 服务持续运行；与 Docker 镜像内系统 cron 相互独立。"
+          />
+          <el-alert
+            v-if="schedStatus?.last_tick_at && (schedStatus.tick_age_seconds ?? 0) > 120"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="mt"
+            :title="`定时检查已超过 ${schedStatus.tick_age_seconds} 秒未心跳，请确认 Web 进程在运行`"
+          />
+          <el-text v-else-if="schedStatus?.last_tick_at" size="small" type="success" class="mt block">
+            定时检查正常 · 最近心跳 {{ schedStatus.last_tick_at }}
+          </el-text>
           <el-table :data="schedDraft" stripe border size="small" class="mt">
             <el-table-column label="启用" width="70" align="center">
               <template #default="{ row }">
@@ -1205,6 +1270,37 @@ onUnmounted(() => {
           </el-checkbox-group>
           <el-input v-model="schTimes" type="textarea" :rows="2" placeholder="每行 HH:MM" class="mt mono" />
           <el-text size="small" type="info">{{ schedMsg }}</el-text>
+
+          <div class="card-head mt">
+            <span>最近触发记录</span>
+            <el-button :icon="Refresh" size="small" link @click="loadScheduler">刷新</el-button>
+          </div>
+          <el-table :data="schedFireHistory" stripe border size="small" max-height="260" class="mt">
+            <el-table-column prop="fired_at" label="触发时间" width="150" />
+            <el-table-column prop="schedule_title" label="定时名称" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="job_label" label="作业" width="110" />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="fireStatusType(row.status)" size="small">
+                  {{ fireStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="执行记录" width="100">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.run_id"
+                  link
+                  type="primary"
+                  @click="showDetail(row.run_id); activeTab = 'runs'"
+                >
+                  查看
+                </el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="message" label="说明" min-width="140" show-overflow-tooltip />
+          </el-table>
         </el-tab-pane>
 
         <el-tab-pane v-if="tabVisible('runs')" label="执行记录" name="runs">
@@ -1213,6 +1309,13 @@ onUnmounted(() => {
           </el-space>
           <el-table :data="runs" stripe border size="small" max-height="400" class="mt">
             <el-table-column prop="started_at" label="开始" width="150" />
+            <el-table-column label="触发" width="70" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.trigger_source === 'scheduler' ? 'warning' : 'info'" size="small">
+                  {{ triggerLabel(row) }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="label" label="作业" width="110" />
             <el-table-column label="条件" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">{{ formatRunConditions(row) }}</template>

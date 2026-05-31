@@ -21,7 +21,11 @@ __date__ = '2023/3/10 '
 def save_after_close_stock_blocktrade_data(date):
     try:
         data = stf.fetch_stock_blocktrade_data(date)
-        if data is None or len(data.index) == 0:
+        rows = 0 if data is None else len(data.index)
+        print(f"[PROGRESS] blocktrade date={date} rows={rows}", flush=True)
+        if data is None or rows == 0:
+            if rows == 0:
+                print("[WARN] blocktrade 当日无写入（可能无大宗或尚未披露）", flush=True)
             return
 
         table_name = tbs.TABLE_CN_STOCK_BLOCKTRADE['name']
@@ -41,7 +45,11 @@ def save_after_close_stock_blocktrade_data(date):
 def save_after_close_stock_chip_race_end_data(date):
     try:
         data = stf.fetch_stock_chip_race_end(date)
-        if data is None or len(data.index) == 0:
+        rows = 0 if data is None else len(data.index)
+        print(f"[PROGRESS] chip_race_end date={date} rows={rows}", flush=True)
+        if data is None or rows == 0:
+            if rows == 0:
+                print("[WARN] chip_race_end 当日无写入", flush=True)
             return
 
         table_name = tbs.TABLE_CN_STOCK_CHIP_RACE_END['name']

@@ -220,7 +220,7 @@ def fetch_stocks_fund_flow(index):
         data = data.loc[data['code'].apply(is_a_stock)].loc[data['new_price'].apply(is_open_with_line)]
         return data
     except Exception as e:
-        logging.error(f"stockfetch.fetch_stocks_fund_flow处理异常：{e}")
+        logging.warning(f"stockfetch.fetch_stocks_fund_flow 跳过（东财 push2 clist 不可用）: {e}")
     return None
 
 
@@ -234,7 +234,7 @@ def fetch_stocks_sector_fund_flow(index_sector, index_indicator):
         data.columns = list(cn_flow['columns'])
         return data
     except Exception as e:
-        logging.error(f"stockfetch.fetch_stocks_sector_fund_flow处理异常：{e}")
+        logging.warning(f"stockfetch.fetch_stocks_sector_fund_flow 跳过（东财 push2 clist 不可用）: {e}")
     return None
 
 

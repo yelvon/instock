@@ -14,6 +14,10 @@ PUSH2_HOST_CHOICES: tuple[str, ...] = ("82", "88", "80")
 AUTO_HOST_ORDER: tuple[str, ...] = ("82", "88", "80")
 CLIST_PATH = "/api/qt/clist/get"
 
+# 资金流等 clist 接口：短超时、少重试，避免 push2 不通时刷屏
+CLIST_FAST_TIMEOUT = (3, 20)
+CLIST_FAST_RETRY = 2
+
 
 def normalize_push2_host(raw: Optional[str]) -> str:
     s = (raw or "auto").strip().lower()
@@ -212,6 +216,15 @@ def hosts_for_clist_requests(preference: Optional[str] = None) -> List[str]:
             seen.add(h)
             out.append(h)
     return out
+
+
+def clist_request(fetcher: Any, params: Dict[str, Any], **kwargs: Any) -> Any:
+    """clist/get 统一走 Push2ClistRouter（82/88/80 HTTPS），替代旧 http://push2.eastmoney.com。"""
+    router = Push2ClistRouter()
+    hop = dict(kwargs)
+    hop.setdefault("retry", CLIST_FAST_RETRY)
+    hop.setdefault("timeout", CLIST_FAST_TIMEOUT)
+    return router.make_request(fetcher, params=params, **hop)
 
 
 class Push2ClistRouter:

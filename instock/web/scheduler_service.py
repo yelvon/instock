@@ -19,6 +19,9 @@ from typing import Any, Dict, List, Set
 _FILE_LOCK = threading.Lock()
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _SCHEDULER_PATH = os.path.join(_REPO_ROOT, "instock", "config", "scheduler.json")
+_FIRE_HISTORY_PATH = os.path.join(_REPO_ROOT, "instock", "log", "scheduler_fire_history.json")
+_STATE_PATH = os.path.join(_REPO_ROOT, "instock", "log", "scheduler_state.json")
+_MAX_FIRE_HISTORY = 300
 
 # 同一自然分钟内同一 schedule id 只触发一次（进程内）
 _fired_minute_keys: Set[str] = set()
@@ -149,13 +152,119 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _ensure_log_dir() -> None:
+    d = os.path.dirname(_FIRE_HISTORY_PATH)
+    if d and not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+
+
+def _load_fire_history() -> List[Dict[str, Any]]:
+    if not os.path.isfile(_FIRE_HISTORY_PATH):
+        return []
+    try:
+        with open(_FIRE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _persist_fire_history(items: List[Dict[str, Any]]) -> None:
+    _ensure_log_dir()
+    try:
+        with open(_FIRE_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(items[-_MAX_FIRE_HISTORY:], f, ensure_ascii=False, indent=0)
+    except Exception as e:
+        logging.warning("scheduler_service._persist_fire_history: %s", e)
+
+
+def append_fire_event(
+    *,
+    schedule_id: str,
+    schedule_title: str,
+    job_id: str,
+    job_label: str,
+    trigger_time: str,
+    weekday: int,
+    status: str,
+    run_id: str = "",
+    message: str = "",
+) -> Dict[str, Any]:
+    """持久化一次定时触发事件（成功/失败/跳过）。"""
+    ev = {
+        "id": str(uuid.uuid4()),
+        "fired_at": datetime.now().isoformat(timespec="seconds"),
+        "schedule_id": (schedule_id or "").strip(),
+        "schedule_title": (schedule_title or "").strip()[:200],
+        "job_id": (job_id or "").strip(),
+        "job_label": (job_label or "").strip()[:120],
+        "trigger_time": (trigger_time or "").strip(),
+        "weekday": int(weekday),
+        "status": (status or "unknown").strip(),
+        "run_id": (run_id or "").strip(),
+        "message": (message or "").strip()[:500],
+    }
+    with _FILE_LOCK:
+        items = _load_fire_history()
+        items.append(ev)
+        if len(items) > _MAX_FIRE_HISTORY:
+            items = items[-_MAX_FIRE_HISTORY:]
+        _persist_fire_history(items)
+    return ev
+
+
+def list_fire_history(limit: int = 50) -> List[Dict[str, Any]]:
+    with _FILE_LOCK:
+        items = _load_fire_history()
+    n = max(1, min(int(limit or 50), _MAX_FIRE_HISTORY))
+    return list(reversed(items[-n:]))
+
+
+def _touch_tick_state(now: Optional[datetime] = None) -> None:
+    ts = (now or datetime.now()).isoformat(timespec="seconds")
+    _ensure_log_dir()
+    try:
+        with open(_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"last_tick_at": ts}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def get_status() -> Dict[str, Any]:
+    cfg = load_config()
+    last_tick_at = ""
+    tick_age_seconds: Optional[int] = None
+    if os.path.isfile(_STATE_PATH):
+        try:
+            with open(_STATE_PATH, "r", encoding="utf-8") as f:
+                st = json.load(f)
+            last_tick_at = str((st or {}).get("last_tick_at") or "")
+            if last_tick_at:
+                tick_age_seconds = int(
+                    (datetime.now() - datetime.fromisoformat(last_tick_at)).total_seconds()
+                )
+        except Exception:
+            pass
+    with _FILE_LOCK:
+        fire_count = len(_load_fire_history())
+    return {
+        "enabled_globally": bool(cfg.get("enabled_globally", True)),
+        "schedule_count": len(cfg.get("schedules") or []),
+        "last_tick_at": last_tick_at,
+        "tick_age_seconds": tick_age_seconds,
+        "fire_history_count": fire_count,
+        "requires_web_process": True,
+    }
+
+
 def tick() -> None:
     """由 Tornado PeriodicCallback 每分钟调用一次。"""
     global _fired_minute_keys
+    now = datetime.now()
+    _touch_tick_state(now)
     cfg = load_config()
     if not cfg.get("enabled_globally", True):
         return
-    now = datetime.now()
     wd = now.weekday()
     hm = f"{now.hour:02d}:{now.minute:02d}"
     minute_bucket = now.strftime("%Y%m%d%H%M")
@@ -172,18 +281,35 @@ def tick() -> None:
         sid = str(sch.get("id") or "")
         if not sid:
             continue
+        job_id = str(sch.get("job_id") or "")
+        title = str(sch.get("title") or "")
+        job_label = next((j["title"] for j in syncsvc.JOB_ITEMS if j["id"] == job_id), job_id)
         key = f"{sid}:{minute_bucket}"
+        skip_dup = False
         with _FILE_LOCK:
             if key in _fired_minute_keys:
-                continue
-            _fired_minute_keys.add(key)
-            if len(_fired_minute_keys) > _MAX_FIRE_KEYS:
-                _fired_minute_keys = set(list(_fired_minute_keys)[-_MAX_FIRE_KEYS // 2 :])
+                skip_dup = True
+            else:
+                _fired_minute_keys.add(key)
+                if len(_fired_minute_keys) > _MAX_FIRE_KEYS:
+                    _fired_minute_keys = set(list(_fired_minute_keys)[-_MAX_FIRE_KEYS // 2 :])
+        if skip_dup:
+            append_fire_event(
+                schedule_id=sid,
+                schedule_title=title,
+                job_id=job_id,
+                job_label=job_label,
+                trigger_time=hm,
+                weekday=wd,
+                status="skipped_duplicate",
+                message="同一分钟内已触发过，跳过重复",
+            )
+            continue
         try:
             extra = sch.get("extra_env")
             if extra is not None and not isinstance(extra, dict):
                 extra = None
-            syncsvc.start_job(
+            rec = syncsvc.start_job(
                 sch["job_id"],
                 date_mode=str(sch.get("date_mode") or "default"),
                 date_start=str(sch.get("date_start") or ""),
@@ -193,16 +319,37 @@ def tick() -> None:
                 bar_data_source=str(sch.get("bar_data_source") or ""),
                 trigger_source="scheduler",
                 schedule_id=sid,
-                schedule_title=str(sch.get("title") or ""),
+                schedule_title=title,
                 extra_env=extra,
             )
+            append_fire_event(
+                schedule_id=sid,
+                schedule_title=title,
+                job_id=job_id,
+                job_label=job_label,
+                trigger_time=hm,
+                weekday=wd,
+                status="triggered",
+                run_id=str(rec.get("id") or ""),
+            )
             logging.info(
-                "scheduler: 已触发 %s job=%s time=%s",
-                sch.get("title"),
-                sch.get("job_id"),
+                "scheduler: 已触发 %s job=%s time=%s run=%s",
+                title,
+                job_id,
                 hm,
+                rec.get("id"),
             )
         except Exception as e:
+            append_fire_event(
+                schedule_id=sid,
+                schedule_title=title,
+                job_id=job_id,
+                job_label=job_label,
+                trigger_time=hm,
+                weekday=wd,
+                status="failed",
+                message=str(e)[:500],
+            )
             logging.error("scheduler tick 触发失败: %s", e)
 
 

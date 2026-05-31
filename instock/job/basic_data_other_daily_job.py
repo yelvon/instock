@@ -3,6 +3,7 @@
 
 import logging
 import concurrent.futures
+import os
 import os.path
 import sys
 import pandas as pd
@@ -17,6 +18,41 @@ import instock.core.stockfetch as stf
 
 __author__ = 'myh '
 __date__ = '2023/3/10 '
+
+_PUSH2_SKIP_WARNED = False
+_PUSH2_PROBE_OK = None
+
+
+def _skip_em_push2_jobs() -> bool:
+    return os.environ.get("INSTOCK_SKIP_EM_PUSH2", "").strip() == "1"
+
+
+def _push2_clist_ok() -> bool:
+    global _PUSH2_PROBE_OK
+    if _PUSH2_PROBE_OK is not None:
+        return _PUSH2_PROBE_OK
+    if _skip_em_push2_jobs():
+        _PUSH2_PROBE_OK = False
+        return False
+    try:
+        from instock.core.eastmoney_push2 import probe_push2_clist
+
+        _PUSH2_PROBE_OK = bool((probe_push2_clist() or {}).get("ok"))
+    except Exception:
+        _PUSH2_PROBE_OK = False
+    return _PUSH2_PROBE_OK
+
+
+def _warn_push2_unavailable(reason: str = "") -> None:
+    global _PUSH2_SKIP_WARNED
+    if _PUSH2_SKIP_WARNED:
+        return
+    _PUSH2_SKIP_WARNED = True
+    msg = "[WARN] 东财 push2 clist 不可用，已跳过个股/板块资金流"
+    if reason:
+        msg += f"（{reason}）"
+    msg += "。大宗/尾盘抢筹请单独跑「盘后数据」作业。"
+    print(msg, flush=True)
 
 # 每日股票龙虎榜
 def save_nph_stock_lhb_data(date, before=True):
@@ -105,6 +141,9 @@ def save_nph_stock_fund_flow_data(date, before=True):
 
 
 def run_check_stock_fund_flow(times):
+    if not _push2_clist_ok():
+        _warn_push2_unavailable("INSTOCK_SKIP_EM_PUSH2=1" if _skip_em_push2_jobs() else "")
+        return None
     data = {}
     try:
         for k in times :
@@ -113,6 +152,10 @@ def run_check_stock_fund_flow(times):
                 data[k] = _data
     except Exception as e:
         logging.error(f"basic_data_other_daily_job.run_check_stock_fund_flow处理异常：{e}")
+    if not data:
+        _warn_push2_unavailable()
+        return None
+    return data
     # try:
     #     with concurrent.futures.ThreadPoolExecutor(max_workers=len(times)) as executor:
     #         future_to_data = {executor.submit(stf.fetch_stocks_fund_flow, k): k for k in times}
@@ -126,10 +169,6 @@ def run_check_stock_fund_flow(times):
     #                 logging.error(f"basic_data_other_daily_job.run_check_stock_fund_flow处理异常：代码{e}")
     # except Exception as e:
     #     logging.error(f"basic_data_other_daily_job.run_check_stock_fund_flow处理异常：{e}")
-    if not data:
-        return None
-    else:
-        return data
 
 
 # 每日行业资金流向
@@ -182,6 +221,8 @@ def stock_sector_fund_flow_data(date, index_sector):
 
 
 def run_check_stock_sector_fund_flow(index_sector, times):
+    if not _push2_clist_ok():
+        return None
     data = {}
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(times)) as executor:

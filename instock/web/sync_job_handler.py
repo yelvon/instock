@@ -699,13 +699,28 @@ class DataSourcesApiHandler(webBase.BaseHandler, ABC):
 
 
 class SchedulerConfigApiHandler(webBase.BaseHandler, ABC):
-    """应用内定时任务配置（触发记录见下方「执行记录」，trigger_source=scheduler）。"""
+    """应用内定时任务配置；触发记录见 fire_history 与「执行记录」（trigger_source=scheduler）。"""
 
     def get(self):
         import instock.web.scheduler_service as sch
 
         self.set_header("Content-Type", "application/json;charset=UTF-8")
-        self.write(json.dumps({"ok": True, "config": sch.load_config()}, ensure_ascii=False))
+        limit = 50
+        try:
+            limit = int(self.get_argument("history_limit", "50"))
+        except (TypeError, ValueError):
+            limit = 50
+        self.write(
+            json.dumps(
+                {
+                    "ok": True,
+                    "config": sch.load_config(),
+                    "status": sch.get_status(),
+                    "fire_history": sch.list_fire_history(limit),
+                },
+                ensure_ascii=False,
+            )
+        )
 
     def post(self):
         import instock.web.scheduler_service as sch
