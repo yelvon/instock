@@ -25,6 +25,11 @@ from instock.core.data.profile import (
     tencent_enrich_enabled,
     tdx_dir,
 )
+from instock.core.spot_source import (
+    SPOT_SOURCE_BAOSTOCK,
+    SPOT_SOURCE_EASTMONEY,
+    effective_spot_source,
+)
 from instock.core.data.provider import DomainProvider, FetchResult
 
 _REGISTRY: Optional["DataRegistry"] = None
@@ -97,6 +102,12 @@ class DataRegistry:
         prof_cfg = (dom.get("profiles") or {}).get(prof) or {}
         steps = [_step_from_dict(x) for x in (prof_cfg.get("chain") or [])]
         steps = [s for s in steps if _step_applies(s)]
+        if domain_id == "daily_spot_snapshot":
+            mode = effective_spot_source()
+            if mode == SPOT_SOURCE_BAOSTOCK:
+                steps = [s for s in steps if s.provider_id == "baostock"]
+            elif mode == SPOT_SOURCE_EASTMONEY:
+                steps = [s for s in steps if s.provider_id == "eastmoney"]
         if domain_id in ("daily_bar_raw", "daily_bar"):
             source = effective_bar_data_source()
             if source == BAR_SOURCE_MOOTDX or bars_mootdx_only():

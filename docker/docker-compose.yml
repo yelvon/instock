@@ -48,6 +48,8 @@ services:
       INSTOCK_BAR_DATA_SOURCE: ${INSTOCK_BAR_DATA_SOURCE:-mootdx}
       INSTOCK_USE_DATA_REGISTRY: ${INSTOCK_USE_DATA_REGISTRY:-1}
       INSTOCK_BAR_MODE: raw
+      # push2 不通时 auto 会先卡东财；设为 auto 且 registry 会按序回退 Baostock
+      INSTOCK_SPOT_DATA_SOURCE: ${INSTOCK_SPOT_DATA_SOURCE:-auto}
     volumes:
       - ${INSTOCK_PROXY_FILE:-${HOME}/instock-docker/instockproxy.txt}:/data/InStock/instock/config/proxy.txt
       - ${INSTOCK_COOKIE_FILE:-${HOME}/instock-docker/eastmoneycookie.txt}:/data/InStock/instock/config/eastmoney_cookie.txt

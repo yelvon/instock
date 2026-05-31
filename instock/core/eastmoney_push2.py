@@ -152,6 +152,51 @@ def probe_push2_clist(
     }
 
 
+def probe_xuangu_selection(log: Optional[Any] = None) -> Dict[str, Any]:
+    """探测综合选股 xuangu 接口（不经过 push2）。"""
+    import time
+
+    from instock.core.eastmoney_fetcher import eastmoney_fetcher
+
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+
+    url = "https://data.eastmoney.com/dataapi/xuangu/list"
+    params = {
+        "sty": "SECURITY_CODE,SECURITY_NAME_ABBR,NEW_PRICE,CHANGE_RATE",
+        "filter": '(MARKET+in+("上交所主板","深交所主板","深交所创业板"))(NEW_PRICE>0)',
+        "p": 1,
+        "ps": 5,
+        "source": "SELECT_SECURITIES",
+        "client": "WEB",
+    }
+    t0 = time.time()
+    try:
+        r = eastmoney_fetcher().make_request(url, params=params, timeout=(8, 30), retry=2)
+        data_json = r.json()
+        block = (data_json.get("result") or {}) if isinstance(data_json, dict) else {}
+        rows = block.get("data") or []
+        total = int(block.get("count") or 0)
+        n = len(rows) if isinstance(rows, list) else 0
+        elapsed = int((time.time() - t0) * 1000)
+        if n > 0:
+            _log(f"选股 xuangu 成功：首屏 {n} 条，全市场约 {total} 只，{elapsed}ms")
+            return {
+                "ok": True,
+                "rows": n,
+                "total": total,
+                "elapsed_ms": elapsed,
+                "error": None,
+            }
+        _log(f"选股 xuangu 返回空 data（{elapsed}ms）")
+        return {"ok": False, "rows": 0, "total": total, "elapsed_ms": elapsed, "error": "xuangu data 为空"}
+    except Exception as e:
+        elapsed = int((time.time() - t0) * 1000)
+        _log(f"选股 xuangu 失败：{str(e)[:160]}（{elapsed}ms）")
+        return {"ok": False, "rows": 0, "total": 0, "elapsed_ms": elapsed, "error": str(e)[:500]}
+
+
 def hosts_for_clist_requests(preference: Optional[str] = None) -> List[str]:
     """
     实际请求顺序：auto 为 82→88→80；固定节点时优先该节点，失败后仍尝试其余节点（避免偏好 82 时整批作业失败）。
@@ -192,7 +237,7 @@ class Push2ClistRouter:
             try:
                 hop_kw = dict(kwargs)
                 hop_kw.setdefault("retry", 1)
-                hop_kw.setdefault("timeout", (5, 15))
+                hop_kw.setdefault("timeout", (3, 12))
                 r = fetcher.make_request(
                     clist_get_url(host), params=params, **hop_kw
                 )

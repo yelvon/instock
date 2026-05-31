@@ -88,19 +88,26 @@ def run_with_args(run_fun, *args):
         )
         failures: list = []
         consecutive = 0
+        batch_t0 = time.monotonic()
         for i, run_date in enumerate(batch_dates, 1):
             ds = run_date.strftime("%Y-%m-%d")
             print(f"[PROGRESS] {i}/{total} {ds} start", flush=True)
+            t0 = time.monotonic()
             try:
                 _invoke_one(run_fun, run_date, args)
                 consecutive = 0
-                print(f"[PROGRESS] {i}/{total} {ds} done", flush=True)
+                elapsed = time.monotonic() - t0
+                print(
+                    f"[PROGRESS] {i}/{total} {ds} done elapsed={elapsed:.1f}s",
+                    flush=True,
+                )
             except Exception as e:
                 consecutive += 1
+                elapsed = time.monotonic() - t0
                 msg = str(e)
                 failures.append(msg)
                 logging.error("run_template 子任务失败 %s: %s", ds, e)
-                print(f"[FAIL] {ds} {msg}", flush=True)
+                print(f"[FAIL] {ds} elapsed={elapsed:.1f}s {msg}", flush=True)
                 if consecutive >= max_consec:
                     print(
                         f"[FAIL] 连续 {consecutive} 个交易日拉取失败，已停止后续日期",
@@ -111,7 +118,11 @@ def run_with_args(run_fun, *args):
         if failures:
             print(f"[FAIL] 共 {len(failures)}/{total} 个交易日失败", flush=True)
             sys.exit(1)
-        print(f"[PROGRESS] 全部 {total} 日完成", flush=True)
+        batch_elapsed = time.monotonic() - batch_t0
+        print(
+            f"[PROGRESS] 全部 {total} 日完成 total_elapsed={batch_elapsed:.1f}s",
+            flush=True,
+        )
         return
 
     try:
