@@ -4,10 +4,11 @@ export const CATEGORY_LABELS: Record<string, string> = {
   baseline: "基准策略",
   technical: "技术指标",
   screening: "选股桥接",
+  portfolio: "组合策略",
   plugin: "插件策略",
 };
 
-export const CATEGORY_ORDER = ["baseline", "technical", "screening", "plugin"];
+export const CATEGORY_ORDER = ["baseline", "technical", "screening", "portfolio", "plugin"];
 
 export function strategyParamsFromItem(s: BacktestStrategyItem | undefined): Record<string, number | string | boolean> {
   if (!s) return {};

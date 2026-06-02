@@ -69,6 +69,34 @@ def domains_for_profile(profile: Optional[str]) -> List[str]:
     return list(BACKTEST_DOMAINS)
 
 
+def check_universe_table_data(
+    date_from: datetime.date,
+    date_to: datetime.date,
+    table: str,
+) -> DomainGapReport:
+    """检查选股/策略信号表在区间内的日期覆盖。"""
+    from instock.core.backtest.universe_loader import check_table_universe_coverage
+
+    miss_cal, _ = gaps.detect_trade_calendar_gaps(date_from, date_to)
+    trade_dates = []
+    import pandas as pd
+
+    for d in pd.bdate_range(date_from, date_to):
+        if d.date() not in set(miss_cal):
+            trade_dates.append(d.date())
+    missing, total = check_table_universe_coverage(table, date_from, date_to, trade_dates)
+    job = "selection_data_daily_job" if "selection" in table else "strategy_data_daily_job"
+    dr = DomainGapReport(
+        domain_id="universe_table",
+        missing_trade_dates=[datetime.date.fromisoformat(x) for x in missing[:200]],
+        table=table,
+        suggested_jobs=[job],
+    )
+    if not total:
+        dr.suggested_jobs = [job]
+    return dr, missing, total
+
+
 def check_backtest_data(
     date_from: datetime.date,
     date_to: datetime.date,
@@ -77,6 +105,7 @@ def check_backtest_data(
     profile: Optional[str] = None,
     codes: Optional[List[str]] = None,
     adjust_type: str = "raw",
+    universe_table: Optional[str] = None,
 ) -> PrerequisitesReport:
     prof = (profile or "backtest").strip().lower()
     domains = list(required_domains or domains_for_profile(prof))
@@ -155,6 +184,25 @@ def check_backtest_data(
         if all_miss:
             report.ok = False
             report.messages.append("衍生指标表存在缺日")
+
+    if universe_table:
+        dr, missing, total = check_universe_table_data(date_from, date_to, universe_table)
+        report.domains["universe_table"] = dr
+        if total <= 0:
+            report.ok = False
+            report.messages.append(f"表 {universe_table} 在区间内无数据，请运行 {dr.suggested_jobs[0]}")
+        elif missing:
+            miss_cal, _ = gaps.detect_trade_calendar_gaps(date_from, date_to)
+            import pandas as pd
+
+            expected = sum(
+                1
+                for d in pd.bdate_range(date_from, date_to)
+                if d.date() not in set(miss_cal)
+            )
+            if expected and len(missing) >= max(1, int(expected * 0.5)):
+                report.ok = False
+            report.messages.append(f"表 {universe_table} 缺 {len(missing)} 个交易日信号")
 
     return report
 

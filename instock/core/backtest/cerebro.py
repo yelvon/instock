@@ -25,17 +25,22 @@ class Cerebro:
         stamp_tax_rate: float = 0.001,
         transfer_fee_rate: float = 0.00002,
         max_weight_per_symbol: float = 0.1,
+        slippage_bps: float = 0.0,
+        match_price: str = "next_open",
     ) -> None:
         self.run_id = run_id
         self.title = title
         self.initial_cash = initial_cash
         self.max_weight_per_symbol = max_weight_per_symbol
+        self.match_price = match_price or "next_open"
+        self.slippage_bps = float(slippage_bps or 0)
         self.broker = SimBroker(
             initial_cash=initial_cash,
             commission_rate=commission_rate,
             min_commission=min_commission,
             stamp_tax_rate=stamp_tax_rate,
             transfer_fee_rate=transfer_fee_rate,
+            slippage_bps=self.slippage_bps,
         )
         self._strategy_cls: Optional[Type[Strategy]] = None
         self._strategy_params: Dict[str, Any] = {}
@@ -73,7 +78,7 @@ class Cerebro:
         strategy.start()
         for date in self.dates:
             day_trade_count, day_turnover = self.broker.process_due_orders(
-                date, self.by_code_date
+                date, self.by_code_date, self.dates
             )
             strategy.next(date)
             market_value, day_pos = self.broker.snapshot_positions(
@@ -114,6 +119,8 @@ class Cerebro:
             )
         strategy.stop()
         extra = dict(self._strategy_params)
+        extra["matchPrice"] = self.match_price
+        extra["slippageBps"] = self.slippage_bps
         return build_success_payload(
             run_id=self.run_id,
             title=self.title,

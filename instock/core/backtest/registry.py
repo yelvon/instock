@@ -194,6 +194,8 @@ def run_backtest(
     stamp_tax_rate: float = 0.001,
     transfer_fee_rate: float = 0.00002,
     max_weight_per_symbol: float = 0.1,
+    slippage_bps: float = 0.0,
+    match_price: str = "next_open",
 ) -> Dict[str, Any]:
     ensure_registry()
     merged_params = validate_params(strategy_id, strategy_params)
@@ -211,6 +213,8 @@ def run_backtest(
             stamp_tax_rate=stamp_tax_rate,
             transfer_fee_rate=transfer_fee_rate,
             max_weight_per_symbol=max_weight_per_symbol,
+            slippage_bps=slippage_bps,
+            match_price=match_price,
         )
         .add_strategy(cls, merged_params)
         .set_bars(bars_by_code)

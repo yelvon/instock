@@ -16,11 +16,16 @@ import { ElMessage } from "element-plus";
 import BacktestKlineChart from "@/features/backtest/BacktestKlineChart.vue";
 import {
   cancelBacktestRun,
+  compareBacktestRuns,
   createBacktestRun,
   deleteBacktestRun,
+  getBacktestBatch,
   getBacktestRun,
   listBacktestRuns,
   listBacktestStrategies,
+  startGridBatch,
+  startWalkforwardBatch,
+  backtestExportUrl,
   type BacktestCreatePayload,
   type BacktestRunDetail,
   type BacktestRunListItem,
@@ -108,7 +113,12 @@ const form = ref({
   title: "双均线示例回测",
   dateFrom: "2024-01-01",
   dateTo: "2024-03-31",
+  universeType: "codes" as "codes" | "selection_table" | "strategy_table",
   codesText: "600000",
+  selectionTable: "cn_stock_selection",
+  strategyTable: "cn_stock_strategy_enter",
+  benchmarkCode: "" as "" | "000300" | "000905",
+  slippageBps: 0,
   initialCash: 1000000,
   commissionRate: 0.0003,
   minCommission: 5,
@@ -118,6 +128,20 @@ const form = ref({
   barDataSource: "mootdx",
   priceMode: "raw" as "raw" | "qfq",
 });
+
+const researchForm = ref({
+  gridParam1: "fast",
+  gridValues1: "5,10",
+  gridParam2: "slow",
+  gridValues2: "20,30",
+  trainDays: 60,
+  testDays: 20,
+  stepDays: 20,
+  compareIds: "",
+});
+const researchBatchId = ref("");
+const researchCompare = ref<Array<{ id: string; title?: string; metrics?: Record<string, number> }>>([]);
+const researchSubmitting = ref(false);
 
 const priceModeLabel = (mode: unknown) => (mode === "qfq" ? "前复权" : "不复权");
 
@@ -181,11 +205,25 @@ function codes(): string[] {
 }
 
 function buildPayload(): BacktestCreatePayload {
+  let universe: BacktestCreatePayload["universe"];
+  if (form.value.universeType === "selection_table") {
+    universe = { type: "selection_table", table: form.value.selectionTable };
+  } else if (form.value.universeType === "strategy_table") {
+    universe = { type: "strategy_table", table: form.value.strategyTable };
+  } else {
+    universe = { type: "codes", codes: codes() };
+  }
+  const benchmark =
+    form.value.benchmarkCode === "000300"
+      ? { code: "000300", name: "沪深300" }
+      : form.value.benchmarkCode === "000905"
+        ? { code: "000905", name: "中证500" }
+        : undefined;
   return {
     title: form.value.title,
     dateFrom: form.value.dateFrom,
     dateTo: form.value.dateTo,
-    universe: { type: "codes", codes: codes() },
+    universe,
     strategy: {
       id: strategyId.value,
       params: { ...strategyParams.value },
@@ -196,7 +234,7 @@ function buildPayload(): BacktestCreatePayload {
       commissionRate: form.value.commissionRate,
       minCommission: form.value.minCommission,
       stampTaxRate: form.value.stampTaxRate,
-      slippageBps: 0,
+      slippageBps: form.value.slippageBps,
     },
     risk: {
       maxPositions: 20,
@@ -208,6 +246,7 @@ function buildPayload(): BacktestCreatePayload {
       priceMode: form.value.priceMode,
       requirePrerequisites: form.value.requirePrerequisites,
     },
+    benchmark,
   };
 }
 
@@ -235,7 +274,7 @@ async function loadDetail(id: string) {
 }
 
 async function submitRun() {
-  if (!codes().length) {
+  if (form.value.universeType === "codes" && !codes().length) {
     ElMessage.warning("请至少输入一个股票代码");
     return;
   }
@@ -388,6 +427,82 @@ async function deleteRun(id: string) {
     clearSelection();
   }
   await loadRuns();
+}
+
+function parseGridValues(raw: string): (number | string)[] {
+  return raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => (Number.isFinite(Number(x)) ? Number(x) : x));
+}
+
+async function runParamGrid() {
+  researchSubmitting.value = true;
+  try {
+    const grid: Record<string, (number | string)[]> = {};
+    const v1 = parseGridValues(researchForm.value.gridValues1);
+    const v2 = parseGridValues(researchForm.value.gridValues2);
+    if (v1.length) grid[researchForm.value.gridParam1] = v1;
+    if (v2.length) grid[researchForm.value.gridParam2] = v2;
+    const batch = await startGridBatch({ basePayload: buildPayload(), grid });
+    researchBatchId.value = batch.id;
+    ElMessage.success(`参数网格已启动：${batch.id.slice(0, 8)}`);
+  } catch (e) {
+    ElMessage.error(String(e));
+  } finally {
+    researchSubmitting.value = false;
+  }
+}
+
+async function runWalkforward() {
+  researchSubmitting.value = true;
+  try {
+    const batch = await startWalkforwardBatch({
+      basePayload: buildPayload(),
+      trainDays: researchForm.value.trainDays,
+      testDays: researchForm.value.testDays,
+      stepDays: researchForm.value.stepDays,
+    });
+    researchBatchId.value = batch.id;
+    ElMessage.success(`Walk-forward 已启动：${batch.id.slice(0, 8)}`);
+  } catch (e) {
+    ElMessage.error(String(e));
+  } finally {
+    researchSubmitting.value = false;
+  }
+}
+
+async function loadResearchBatch() {
+  if (!researchBatchId.value.trim()) return;
+  try {
+    await getBacktestBatch(researchBatchId.value.trim());
+    ElMessage.success("批量任务已刷新");
+  } catch (e) {
+    ElMessage.error(String(e));
+  }
+}
+
+async function runCompare() {
+  const ids = researchForm.value.compareIds
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (ids.length < 2) {
+    ElMessage.warning("请至少输入 2 个 run id");
+    return;
+  }
+  try {
+    const res = await compareBacktestRuns(ids);
+    researchCompare.value = res.items || [];
+  } catch (e) {
+    ElMessage.error(String(e));
+  }
+}
+
+function exportCurrentRun() {
+  if (!detail.value?.id) return;
+  window.open(backtestExportUrl(detail.value.id), "_blank");
 }
 
 const selectedRun = computed(() => runs.value.find((r) => r.id === selectedId.value));
@@ -615,6 +730,22 @@ onUnmounted(() => {
             </el-col>
           </el-row>
           <el-divider content-position="left">标的与区间</el-divider>
+          <el-form-item label="股票池类型">
+            <el-radio-group v-model="form.universeType">
+              <el-radio label="codes">手动代码</el-radio>
+              <el-radio label="selection_table">综合选股表</el-radio>
+              <el-radio label="strategy_table">策略信号表</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="form.universeType === 'codes'" label="股票代码">
+            <el-input v-model="form.codesText" type="textarea" :rows="2" placeholder="600000,000001" />
+          </el-form-item>
+          <el-form-item v-else-if="form.universeType === 'selection_table'" label="选股表">
+            <el-input v-model="form.selectionTable" placeholder="cn_stock_selection" />
+          </el-form-item>
+          <el-form-item v-else label="策略信号表">
+            <el-input v-model="form.strategyTable" placeholder="cn_stock_strategy_enter" />
+          </el-form-item>
           <el-form-item label="任务名称">
             <el-input v-model="form.title" />
           </el-form-item>
@@ -630,11 +761,18 @@ onUnmounted(() => {
               </el-form-item>
             </el-col>
           </el-row>
-          <el-form-item label="股票代码">
-            <el-input v-model="form.codesText" type="textarea" :rows="2" placeholder="600000,000001" />
-          </el-form-item>
               </el-collapse-item>
               <el-collapse-item title="资金与费用" name="broker">
+          <el-form-item label="基准指数">
+            <el-select v-model="form.benchmarkCode" style="width: 100%">
+              <el-option label="无基准" value="" />
+              <el-option label="沪深300 (000300)" value="000300" />
+              <el-option label="中证500 (000905)" value="000905" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="滑点 (bps)">
+            <el-input-number v-model="form.slippageBps" :min="0" :max="100" :step="1" style="width: 100%" />
+          </el-form-item>
           <el-form-item label="价格口径">
             <el-radio-group v-model="form.priceMode">
               <el-radio label="raw">不复权（通达信本地 raw）</el-radio>
@@ -652,6 +790,45 @@ onUnmounted(() => {
             <el-col :span="12"><el-form-item label="佣金率"><el-input-number v-model="form.commissionRate" :min="0" :step="0.0001" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="印花税"><el-input-number v-model="form.stampTaxRate" :min="0" :step="0.0001" /></el-form-item></el-col>
           </el-row>
+              </el-collapse-item>
+              <el-collapse-item title="研究工具" name="research">
+                <el-form-item label="网格参数1">
+                  <el-input v-model="researchForm.gridParam1" placeholder="fast" style="width: 120px" />
+                  <el-input v-model="researchForm.gridValues1" placeholder="5,10" class="ml-mini" />
+                </el-form-item>
+                <el-form-item label="网格参数2">
+                  <el-input v-model="researchForm.gridParam2" placeholder="slow" style="width: 120px" />
+                  <el-input v-model="researchForm.gridValues2" placeholder="20,30" class="ml-mini" />
+                </el-form-item>
+                <el-form-item>
+                  <el-button size="small" :loading="researchSubmitting" @click="runParamGrid">运行参数网格</el-button>
+                </el-form-item>
+                <el-divider content-position="left">Walk-forward</el-divider>
+                <el-row :gutter="8">
+                  <el-col :span="8"><el-form-item label="训练日"><el-input-number v-model="researchForm.trainDays" :min="10" /></el-form-item></el-col>
+                  <el-col :span="8"><el-form-item label="测试日"><el-input-number v-model="researchForm.testDays" :min="5" /></el-form-item></el-col>
+                  <el-col :span="8"><el-form-item label="步长"><el-input-number v-model="researchForm.stepDays" :min="1" /></el-form-item></el-col>
+                </el-row>
+                <el-form-item>
+                  <el-button size="small" :loading="researchSubmitting" @click="runWalkforward">运行 Walk-forward</el-button>
+                </el-form-item>
+                <el-divider content-position="left">多 run 对比</el-divider>
+                <el-form-item label="run ids">
+                  <el-input v-model="researchForm.compareIds" placeholder="uuid1,uuid2" />
+                </el-form-item>
+                <el-form-item>
+                  <el-space wrap>
+                    <el-button size="small" @click="runCompare">对比</el-button>
+                    <el-input v-model="researchBatchId" placeholder="批量任务 batchId" style="width: 220px" />
+                    <el-button size="small" link @click="loadResearchBatch">刷新 batch</el-button>
+                  </el-space>
+                </el-form-item>
+                <el-table v-if="researchCompare.length" :data="researchCompare" size="small" class="mt-mini">
+                  <el-table-column prop="id" label="run" min-width="160" />
+                  <el-table-column prop="title" label="名称" min-width="120" />
+                  <el-table-column label="收益" width="90"><template #default="{ row }">{{ pct(row.metrics?.totalReturn) }}</template></el-table-column>
+                  <el-table-column label="夏普" width="80"><template #default="{ row }">{{ row.metrics?.sharpe ?? "-" }}</template></el-table-column>
+                </el-table>
               </el-collapse-item>
               <el-collapse-item title="数据检查" name="data">
           <el-form-item>
@@ -746,6 +923,7 @@ onUnmounted(() => {
           <span class="panel-title">{{ detail.title }}</span>
           <el-space wrap>
             <el-button size="small" link @click="clearSelection">新建回测</el-button>
+            <el-button v-if="detail.status === 'success'" size="small" link type="primary" @click="exportCurrentRun">导出 CSV</el-button>
             <el-tag size="small" :type="detail.status === 'success' ? 'success' : detail.status === 'failed' ? 'danger' : 'warning'">
               {{ detail.status }}
             </el-tag>
@@ -765,6 +943,7 @@ onUnmounted(() => {
             <el-tab-pane label="总览" name="overview" />
             <el-tab-pane label="K 线" name="kline" />
             <el-tab-pane label="成交与持仓" name="trades" />
+            <el-tab-pane label="研究" name="research" />
           </el-tabs>
         </el-affix>
 
@@ -793,6 +972,18 @@ onUnmounted(() => {
         <div class="metric-tile">
           <span class="metric-label">交易次数</span>
           <span class="metric-value">{{ detail.metrics?.tradeCount ?? 0 }}</span>
+        </div>
+        <div v-if="detail.metrics?.excessReturn != null" class="metric-tile">
+          <span class="metric-label">超额收益</span>
+          <span class="metric-value">{{ pct(detail.metrics?.excessReturn) }}</span>
+        </div>
+        <div v-if="detail.metrics?.alpha != null" class="metric-tile">
+          <span class="metric-label">Alpha</span>
+          <span class="metric-value">{{ detail.metrics?.alpha ?? "-" }}</span>
+        </div>
+        <div v-if="detail.metrics?.informationRatio != null" class="metric-tile">
+          <span class="metric-label">信息比率</span>
+          <span class="metric-value">{{ detail.metrics?.informationRatio ?? "-" }}</span>
         </div>
       </div>
 
@@ -878,6 +1069,23 @@ onUnmounted(() => {
         </el-tab-pane>
       </el-tabs>
         </div>
+
+        <div v-show="resultTab === 'research'">
+          <el-alert type="info" :closable="false" show-icon title="可在新建表单「研究工具」发起参数网格 / Walk-forward；此处对比历史 run。" />
+          <el-form label-position="top" size="small" class="mt">
+            <el-form-item label="对比 run ids">
+              <el-input v-model="researchForm.compareIds" placeholder="uuid1,uuid2" />
+            </el-form-item>
+            <el-button size="small" @click="runCompare">对比选中 runs</el-button>
+          </el-form>
+          <el-table v-if="researchCompare.length" :data="researchCompare" size="small" class="mt">
+            <el-table-column prop="id" label="run" min-width="180" />
+            <el-table-column prop="title" label="名称" min-width="120" />
+            <el-table-column label="累计收益" width="100"><template #default="{ row }">{{ pct(row.metrics?.totalReturn) }}</template></el-table-column>
+            <el-table-column label="夏普" width="80"><template #default="{ row }">{{ row.metrics?.sharpe ?? "-" }}</template></el-table-column>
+            <el-table-column label="最大回撤" width="100"><template #default="{ row }">{{ pct(row.metrics?.maxDrawdown) }}</template></el-table-column>
+          </el-table>
+        </div>
       </template>
         </el-card>
 
@@ -962,9 +1170,13 @@ onUnmounted(() => {
 }
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
   margin-bottom: 12px;
+}
+.ml-mini {
+  margin-left: 8px;
+  width: calc(100% - 128px);
 }
 .metric-tile {
   padding: 12px 14px;

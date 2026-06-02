@@ -101,3 +101,79 @@ class BacktestRunCancelApiHandler(webBase.BaseHandler, ABC):
         except ValueError as e:
             self.set_status(400)
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class BacktestGridApiHandler(webBase.BaseHandler, ABC):
+    def post(self):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        try:
+            batch = svc.start_grid_batch(body)
+            self.write(json.dumps({"ok": True, "batchId": batch["id"], "batch": batch}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class BacktestWalkforwardApiHandler(webBase.BaseHandler, ABC):
+    def post(self):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            body = json.loads(self.request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "JSON 无效"}, ensure_ascii=False))
+            return
+        try:
+            batch = svc.start_walkforward_batch(body)
+            self.write(json.dumps({"ok": True, "batchId": batch["id"], "batch": batch}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
+class BacktestBatchDetailApiHandler(webBase.BaseHandler, ABC):
+    def get(self, batch_id: str):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        batch = svc.get_batch(batch_id)
+        if not batch:
+            self.set_status(404)
+            self.write(json.dumps({"ok": False, "error": "批量任务不存在"}, ensure_ascii=False))
+            return
+        self.write(json.dumps({"ok": True, "batch": batch}, ensure_ascii=False))
+
+
+class BacktestCompareApiHandler(webBase.BaseHandler, ABC):
+    def get(self):
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        ids_raw = self.get_argument("ids", "")
+        run_ids = [x.strip() for x in ids_raw.split(",") if x.strip()]
+        if not run_ids:
+            self.set_status(400)
+            self.write(json.dumps({"ok": False, "error": "缺少 ids"}, ensure_ascii=False))
+            return
+        self.write(json.dumps(svc.compare_runs(run_ids), ensure_ascii=False))
+
+
+class BacktestRunExportApiHandler(webBase.BaseHandler, ABC):
+    def get(self, run_id: str):
+        fmt = (self.get_argument("format", "csv") or "csv").strip().lower()
+        try:
+            if fmt != "csv":
+                raise ValueError("仅支持 format=csv")
+            content = svc.export_run_csv(run_id)
+            self.set_header("Content-Type", "text/csv; charset=utf-8")
+            self.set_header(
+                "Content-Disposition",
+                f'attachment; filename="backtest_{run_id[:8]}.csv"',
+            )
+            self.write(content)
+        except ValueError as e:
+            self.set_status(404 if "不存在" in str(e) else 400)
+            self.set_header("Content-Type", "application/json;charset=UTF-8")
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))

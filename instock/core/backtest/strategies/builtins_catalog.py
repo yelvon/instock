@@ -132,10 +132,42 @@ def _screening_catalog() -> List[StrategyCatalogEntry]:
     return entries
 
 
+def _portfolio_catalog() -> List[StrategyCatalogEntry]:
+    from instock.core.backtest.strategies.top_n_rebalance import TopNRebalanceStrategy
+
+    return [
+        StrategyCatalogEntry(
+            strategy_id=TopNRebalanceStrategy.strategy_id,
+            strategy_cls=TopNRebalanceStrategy,
+            title="Top-N 等权调仓",
+            description="从选股/策略信号表读取候选，定期等权调仓，跌出 Top-N 可卖出。",
+            category="portfolio",
+            tags=["组合", "调仓", "TopN"],
+            param_defs=[
+                ParamDef("table", "信号表", "str", tbs.TABLE_CN_STOCK_SELECTION["name"], required=True),
+                ParamDef("top_n", "持有数量", "int", 10, min=1, max=50),
+                ParamDef("rebalance_days", "调仓周期(交易日)", "int", 5, min=1, max=60),
+                ParamDef(
+                    "rank_by",
+                    "排序字段",
+                    "str",
+                    "change_rate",
+                    required=False,
+                ),
+                ParamDef("exit_when_out", "跌出卖出", "bool", True),
+            ],
+        ),
+    ]
+
+
 def iter_builtin_catalog() -> List[StrategyCatalogEntry]:
     out: List[StrategyCatalogEntry] = []
     out.extend(_baseline_catalog())
     out.extend(_technical_catalog())
+    try:
+        out.extend(_portfolio_catalog())
+    except Exception:
+        pass
     try:
         out.extend(_screening_catalog())
     except Exception:

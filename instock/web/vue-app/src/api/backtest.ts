@@ -50,7 +50,14 @@ export interface BacktestCreatePayload {
   title: string;
   dateFrom: string;
   dateTo: string;
-  universe: { type: "codes"; codes: string[] };
+  universe:
+    | { type: "codes"; codes: string[] }
+    | {
+        type: "selection_table" | "strategy_table";
+        table: string;
+        filter?: Record<string, string | number>;
+        maxUniverseSize?: number;
+      };
   strategy: { id: string; params: Record<string, number | string | boolean> };
   broker: {
     initialCash: number;
@@ -70,9 +77,10 @@ export interface BacktestCreatePayload {
     priceMode: "raw" | "qfq";
     requirePrerequisites: boolean;
   };
+  benchmark?: { code: string; name?: string } | null;
 }
 
-export type StrategyCategory = "technical" | "screening" | "baseline" | "plugin";
+export type StrategyCategory = "technical" | "screening" | "baseline" | "portfolio" | "plugin";
 
 export interface StrategyParamDef {
   key: string;
@@ -168,4 +176,62 @@ export async function getBacktestRunKline(
   return $api<BacktestKlinePayload>(
     `/instock/api/backtest/runs/${encodeURIComponent(runId)}/kline?${q.toString()}`
   );
+}
+
+export interface BacktestBatchItem {
+  id: string;
+  type: "grid" | "walkforward";
+  status: string;
+  runIds?: string[];
+  items?: { label: string; runId: string; status: string }[];
+  summary?: Record<string, number>;
+  progress?: Record<string, unknown>;
+}
+
+export async function startGridBatch(body: {
+  basePayload: BacktestCreatePayload;
+  grid: Record<string, (number | string)[]>;
+}): Promise<BacktestBatchItem> {
+  const res = await $api<{ ok: boolean; batch: BacktestBatchItem }>(
+    "/instock/api/backtest/grid",
+    { method: "POST", body }
+  );
+  return res.batch;
+}
+
+export async function startWalkforwardBatch(body: {
+  basePayload: BacktestCreatePayload;
+  trainDays: number;
+  testDays: number;
+  stepDays: number;
+}): Promise<BacktestBatchItem> {
+  const res = await $api<{ ok: boolean; batch: BacktestBatchItem }>(
+    "/instock/api/backtest/walkforward",
+    { method: "POST", body }
+  );
+  return res.batch;
+}
+
+export async function getBacktestBatch(id: string): Promise<BacktestBatchItem> {
+  const res = await $api<{ ok: boolean; batch: BacktestBatchItem }>(
+    `/instock/api/backtest/batches/${encodeURIComponent(id)}`
+  );
+  return res.batch;
+}
+
+export async function compareBacktestRuns(ids: string[]): Promise<{
+  ok: boolean;
+  items: Array<{
+    id: string;
+    title?: string;
+    metrics?: Record<string, number>;
+    equity?: { time: string[]; value: number[] };
+  }>;
+}> {
+  const q = new URLSearchParams({ ids: ids.join(",") });
+  return $api(`/instock/api/backtest/compare?${q.toString()}`);
+}
+
+export function backtestExportUrl(runId: string): string {
+  return `/instock/api/backtest/runs/${encodeURIComponent(runId)}/export?format=csv`;
 }

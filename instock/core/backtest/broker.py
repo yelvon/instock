@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from instock.core.backtest.constraints import check_order_fill
 from instock.core.backtest.result import _f
 
 
@@ -17,6 +18,7 @@ class SimBroker:
         min_commission: float = 5.0,
         stamp_tax_rate: float = 0.001,
         transfer_fee_rate: float = 0.00002,
+        slippage_bps: float = 0.0,
     ) -> None:
         self.initial_cash = float(initial_cash)
         self.cash = float(initial_cash)
@@ -24,6 +26,7 @@ class SimBroker:
         self.min_commission = min_commission
         self.stamp_tax_rate = stamp_tax_rate
         self.transfer_fee_rate = transfer_fee_rate
+        self.slippage_bps = float(slippage_bps or 0)
         self.positions: Dict[str, Dict[str, Any]] = {}
         self.orders: List[Dict[str, Any]] = []
         self.trades: List[Dict[str, Any]] = []
@@ -67,11 +70,27 @@ class SimBroker:
         self.orders.append(order)
         self.pending_orders.append(order)
 
+    def _prev_row(
+        self, code: str, date: str, dates: List[str], by_code_date: Dict[str, Dict[str, dict]]
+    ) -> Optional[dict]:
+        try:
+            idx = dates.index(date)
+        except ValueError:
+            return None
+        if idx <= 0:
+            return None
+        prev_date = dates[idx - 1]
+        return by_code_date.get(code, {}).get(prev_date)
+
     def process_due_orders(
-        self, date: str, by_code_date: Dict[str, Dict[str, dict]]
+        self,
+        date: str,
+        by_code_date: Dict[str, Dict[str, dict]],
+        dates: Optional[List[str]] = None,
     ) -> tuple[int, float]:
         day_trade_count = 0
         day_turnover = 0.0
+        date_list = dates or []
         due = [o for o in self.pending_orders if o["targetDate"] == date]
         self.pending_orders = [o for o in self.pending_orders if o["targetDate"] != date]
         for order in due:
@@ -83,18 +102,31 @@ class SimBroker:
                 order["status"] = "rejected"
                 order["rejectReason"] = "missing_bar"
                 continue
-            open_price = _f(row.get("open"), _f(row.get("close")))
+            prev_row = self._prev_row(code, date, date_list, by_code_date) if date_list else None
+            reject, fill_price, slip_per_share = check_order_fill(
+                code=code,
+                side=side,
+                row=row,
+                prev_row=prev_row,
+                slippage_bps=self.slippage_bps,
+            )
+            if reject:
+                order["status"] = "rejected"
+                order["rejectReason"] = reject
+                continue
+            open_price = fill_price
+            slippage_cost = round(slip_per_share * target_qty, 2)
             amount = target_qty * open_price
             commission = max(self.min_commission, amount * self.commission_rate)
             stamp_tax = amount * self.stamp_tax_rate if side == "sell" else 0.0
             transfer_fee = amount * self.transfer_fee_rate
             total_cost = commission + stamp_tax + transfer_fee
-            if side == "buy" and amount + total_cost > self.cash:
+            if side == "buy" and amount + total_cost + slippage_cost > self.cash:
                 order["status"] = "rejected"
                 order["rejectReason"] = "cash_not_enough"
                 continue
             if side == "buy":
-                self.cash -= amount + total_cost
+                self.cash -= amount + total_cost + slippage_cost
                 self.positions[code] = {
                     "qty": float(target_qty),
                     "cost": open_price,
@@ -102,7 +134,7 @@ class SimBroker:
                 }
                 position_after = target_qty
             else:
-                self.cash += amount - total_cost
+                self.cash += amount - total_cost - slippage_cost
                 self.positions.pop(code, None)
                 position_after = 0
             order["status"] = "filled"
@@ -122,8 +154,8 @@ class SimBroker:
                     "commission": round(commission, 2),
                     "stampTax": round(stamp_tax, 2),
                     "transferFee": round(transfer_fee, 2),
-                    "slippageCost": 0.0,
-                    "totalCost": round(total_cost, 2),
+                    "slippageCost": slippage_cost,
+                    "totalCost": round(total_cost + slippage_cost, 2),
                     "cashAfter": round(self.cash, 2),
                     "positionAfter": position_after,
                     "reason": order.get("reason"),

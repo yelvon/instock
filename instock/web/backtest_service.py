@@ -23,8 +23,10 @@ from instock.core.backtest.registry import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _STORE_DIR = _REPO_ROOT / "instock" / "log" / "backtest_runs"
+_BATCH_DIR = _REPO_ROOT / "instock" / "log" / "backtest_batches"
 _LOCK = threading.Lock()
 _RUNS: Dict[str, Dict[str, Any]] = {}
+_BATCHES: Dict[str, Dict[str, Any]] = {}
 
 
 class BacktestDataGapError(ValueError):
@@ -62,12 +64,34 @@ def _load_history() -> None:
 
 
 def _codes_from_payload(payload: Dict[str, Any]) -> List[str]:
+    from instock.core.backtest.universe_loader import resolve_universe_codes
+
+    date_from, date_to = _date_range(payload)
+    payload_copy = dict(payload)
+    payload_copy["_date_from"] = date_from
+    payload_copy["_date_to"] = date_to
+    codes, _ = resolve_universe_codes(payload_copy)
+    return codes
+
+
+def _resolve_universe(payload: Dict[str, Any]) -> tuple[List[str], Dict[str, Any]]:
+    from instock.core.backtest.universe_loader import resolve_universe_codes
+
+    date_from, date_to = _date_range(payload)
+    payload_copy = dict(payload)
+    payload_copy["_date_from"] = date_from
+    payload_copy["_date_to"] = date_to
+    return resolve_universe_codes(payload_copy)
+
+
+def _universe_table(payload: Dict[str, Any]) -> Optional[str]:
     uni = payload.get("universe") or {}
-    codes = uni.get("codes") if isinstance(uni, dict) else []
-    if isinstance(codes, str):
-        codes = [x.strip() for x in codes.replace("\n", ",").split(",")]
-    out = [str(c).strip().zfill(6) for c in (codes or []) if str(c).strip()]
-    return out[:30] or ["600000"]
+    if not isinstance(uni, dict):
+        return None
+    ut = str(uni.get("type") or "codes").strip().lower()
+    if ut in ("selection_table", "strategy_table"):
+        return str(uni.get("table") or "").strip() or None
+    return None
 
 
 def _date_range(payload: Dict[str, Any]) -> tuple[str, str]:
@@ -152,6 +176,37 @@ def _load_bars(
     raise ValueError(f"{code} 缺少 {date_from} ~ {date_to} 日线数据")
 
 
+def _ensure_batch_store() -> None:
+    _BATCH_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _persist_batch(batch: Dict[str, Any]) -> None:
+    _ensure_batch_store()
+    path = _BATCH_DIR / f"{batch['id']}.json"
+    path.write_text(json.dumps(batch, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_batch_history() -> None:
+    _ensure_batch_store()
+    with _LOCK:
+        if _BATCHES:
+            return
+        for path in sorted(_BATCH_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("id"):
+                    _BATCHES[data["id"]] = data
+            except Exception:
+                continue
+
+
+def _worker_count() -> int:
+    try:
+        return max(1, int(os.environ.get("INSTOCK_BACKTEST_WORKERS", "2")))
+    except ValueError:
+        return 2
+
+
 def _execute(run_id: str, payload: Dict[str, Any]) -> None:
     with _LOCK:
         run = _RUNS.get(run_id)
@@ -165,7 +220,7 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
         _persist(run)
     try:
         date_from, date_to = _date_range(payload)
-        codes = _codes_from_payload(payload)
+        codes, universe_meta = _resolve_universe(payload)
         strategy = payload.get("strategy") or {}
         strategy_id = (strategy.get("id") or "moving_average_cross").strip()
         params = strategy.get("params") or {}
@@ -174,6 +229,8 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
         data_opts = payload.get("data") or {}
         allow_sample = not bool(data_opts.get("requirePrerequisites", True))
         price_mode = _normalize_price_mode(data_opts.get("priceMode"))
+        slippage_bps = float(broker.get("slippageBps") or 0)
+        match_price = str(broker.get("matchPrice") or "next_open")
         bars = {
             code: _load_bars(
                 code, date_from, date_to, allow_sample=allow_sample, adjust_type=price_mode
@@ -193,9 +250,24 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
             stamp_tax_rate=float(broker.get("stampTaxRate") or 0.001),
             transfer_fee_rate=float(broker.get("transferFeeRate") or 0.00002),
             max_weight_per_symbol=float(risk.get("maxWeightPerSymbol") or 0.1),
+            slippage_bps=slippage_bps,
+            match_price=match_price,
         )
         if isinstance(result.get("params"), dict):
             result["params"]["priceMode"] = price_mode
+            result["params"]["slippageBps"] = slippage_bps
+            result["params"]["matchPrice"] = match_price
+        benchmark_spec = payload.get("benchmark")
+        if benchmark_spec:
+            from instock.core.backtest.benchmark import enrich_result_with_benchmark
+
+            enrich_result_with_benchmark(
+                result,
+                benchmark_spec if isinstance(benchmark_spec, dict) else None,
+                date_from=date_from,
+                date_to=date_to,
+                adjust_type=price_mode,
+            )
         with _LOCK:
             current = _RUNS.get(run_id)
             if current is None:
@@ -205,7 +277,8 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
         result["finishedAt"] = _now()
         result["dateFrom"] = date_from
         result["dateTo"] = date_to
-        result["universe"] = {"type": "codes", "codes": codes}
+        result["universe"] = universe_meta
+        result["benchmarkSpec"] = payload.get("benchmark")
         result["progress"] = {
             "processedDays": len(result["equity"]["time"]),
             "totalDays": len(result["equity"]["time"]),
@@ -256,6 +329,7 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
                 profile=profile,
                 codes=_codes_from_payload(payload),
                 adjust_type=price_mode,
+                universe_table=_universe_table(payload),
             ).to_dict()
             if not report.get("ok"):
                 raise BacktestDataGapError(report)
@@ -265,6 +339,7 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
             raise ValueError(f"回测前置数据检查失败：{e}") from e
     run_id = str(uuid.uuid4())
     date_from, date_to = _date_range(payload)
+    _, universe_meta = _resolve_universe(payload)
     run = {
         "ok": True,
         "id": run_id,
@@ -276,7 +351,7 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
         "dateFrom": date_from,
         "dateTo": date_to,
         "strategy": (payload.get("strategy") or {}).get("id") or "moving_average_cross",
-        "universe": {"type": "codes", "codes": _codes_from_payload(payload)},
+        "universe": universe_meta,
         "progress": {"message": "排队中"},
         "summary": {},
     }
@@ -437,9 +512,179 @@ def reset_for_tests() -> None:
     reset_registry_for_tests()
     with _LOCK:
         _RUNS.clear()
+        _BATCHES.clear()
     if _STORE_DIR.exists():
         for path in _STORE_DIR.glob("*.json"):
             try:
                 path.unlink()
             except OSError:
                 pass
+    if _BATCH_DIR.exists():
+        for path in _BATCH_DIR.glob("*.json"):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _run_batch_jobs(batch_id: str, jobs: List[tuple[str, Dict[str, Any]]]) -> None:
+    from instock.core.backtest.batch_runner import summarize_batch_runs
+
+    completed: List[str] = []
+    for label, payload in jobs:
+        with _LOCK:
+            batch = _BATCHES.get(batch_id)
+            if batch is None or batch.get("status") == "cancelled":
+                return
+            batch["status"] = "running"
+            batch["progress"] = {"done": len(completed), "total": len(jobs), "current": label}
+            _persist_batch(batch)
+        run = start_run(payload, run_inline=True)
+        completed.append(run["id"])
+        with _LOCK:
+            batch = _BATCHES.get(batch_id)
+            if batch is None:
+                return
+            batch.setdefault("runIds", []).append(run["id"])
+            batch["items"] = batch.get("items") or []
+            batch["items"].append({"label": label, "runId": run["id"], "status": run.get("status")})
+            _persist_batch(batch)
+    runs = [get_run(rid) for rid in completed]
+    runs = [r for r in runs if r]
+    summary = summarize_batch_runs(runs)
+    with _LOCK:
+        batch = _BATCHES.get(batch_id)
+        if batch is None:
+            return
+        batch["status"] = "success"
+        batch["finishedAt"] = _now()
+        batch["summary"] = summary
+        batch["progress"] = {"done": len(jobs), "total": len(jobs), "message": "完成"}
+        _persist_batch(batch)
+
+
+def start_grid_batch(body: Dict[str, Any]) -> Dict[str, Any]:
+    from instock.core.backtest.batch_runner import expand_param_grid
+
+    _load_batch_history()
+    base = body.get("basePayload") or body.get("payload") or {}
+    grid = body.get("grid") or {}
+    if not isinstance(base, dict):
+        raise ValueError("basePayload 必须为对象")
+    if not isinstance(grid, dict) or not grid:
+        raise ValueError("grid 不能为空")
+    payloads = expand_param_grid(base, grid)
+    batch_id = str(uuid.uuid4())
+    jobs = [(f"grid-{i + 1}", p) for i, p in enumerate(payloads)]
+    batch = {
+        "id": batch_id,
+        "type": "grid",
+        "status": "queued",
+        "createdAt": _now(),
+        "runIds": [],
+        "items": [],
+        "grid": grid,
+        "summary": {},
+        "progress": {"done": 0, "total": len(jobs)},
+    }
+    with _LOCK:
+        _BATCHES[batch_id] = batch
+        _persist_batch(batch)
+    t = threading.Thread(target=_run_batch_jobs, args=(batch_id, jobs), daemon=True)
+    t.start()
+    return get_batch(batch_id) or batch
+
+
+def start_walkforward_batch(body: Dict[str, Any]) -> Dict[str, Any]:
+    from instock.core.backtest.batch_runner import build_walk_forward_payloads
+
+    _load_batch_history()
+    base = body.get("basePayload") or body.get("payload") or {}
+    if not isinstance(base, dict):
+        raise ValueError("basePayload 必须为对象")
+    train_days = int(body.get("trainDays") or 60)
+    test_days = int(body.get("testDays") or 20)
+    step_days = int(body.get("stepDays") or test_days)
+    jobs = build_walk_forward_payloads(
+        base, train_days=train_days, test_days=test_days, step_days=step_days
+    )
+    if not jobs:
+        raise ValueError("walk-forward 窗口为空，请扩大 dateFrom/dateTo 或减小 train/test 天数")
+    batch_id = str(uuid.uuid4())
+    batch = {
+        "id": batch_id,
+        "type": "walkforward",
+        "status": "queued",
+        "createdAt": _now(),
+        "runIds": [],
+        "items": [],
+        "trainDays": train_days,
+        "testDays": test_days,
+        "stepDays": step_days,
+        "summary": {},
+        "progress": {"done": 0, "total": len(jobs)},
+    }
+    with _LOCK:
+        _BATCHES[batch_id] = batch
+        _persist_batch(batch)
+    t = threading.Thread(target=_run_batch_jobs, args=(batch_id, jobs), daemon=True)
+    t.start()
+    return get_batch(batch_id) or batch
+
+
+def get_batch(batch_id: str) -> Optional[Dict[str, Any]]:
+    _load_batch_history()
+    with _LOCK:
+        row = _BATCHES.get(batch_id)
+        return json.loads(json.dumps(row, ensure_ascii=False)) if row else None
+
+
+def compare_runs(run_ids: List[str]) -> Dict[str, Any]:
+    items = []
+    for rid in run_ids:
+        run = get_run(rid)
+        if not run:
+            continue
+        items.append(
+            {
+                "id": rid,
+                "title": run.get("title"),
+                "status": run.get("status"),
+                "dateFrom": run.get("dateFrom"),
+                "dateTo": run.get("dateTo"),
+                "metrics": run.get("metrics") or {},
+                "equity": {
+                    "time": (run.get("equity") or {}).get("time") or [],
+                    "value": (run.get("equity") or {}).get("value") or [],
+                },
+                "benchmark": run.get("benchmark") or {},
+            }
+        )
+    return {"ok": True, "items": items}
+
+
+def export_run_csv(run_id: str) -> str:
+    run = get_run(run_id)
+    if not run:
+        raise ValueError("回测任务不存在")
+    import csv
+    import io
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["section", "key", "value"])
+    metrics = run.get("metrics") or {}
+    for k, v in metrics.items():
+        w.writerow(["metric", k, v])
+    equity = run.get("equity") or {}
+    for i, dt in enumerate(equity.get("time") or []):
+        w.writerow(["equity", dt, (equity.get("value") or [None])[i]])
+    for t in run.get("trades") or []:
+        w.writerow(
+            [
+                "trade",
+                t.get("date"),
+                f"{t.get('side')} {t.get('code')} qty={t.get('qty')} price={t.get('price')}",
+            ]
+        )
+    return buf.getvalue()
