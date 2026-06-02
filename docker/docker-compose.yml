@@ -43,6 +43,7 @@ services:
       db_port: ${DB_PORT:-3306}
       TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
       # Parallels 通达信本地 vipdoc（宿主机路径见 docker/.env 的 INSTOCK_TDX_DIR_HOST）
+      # SMB 挂载易 EIO：建议 INSTOCK_MOOTDX_LOCAL_WORKERS=1；复制 vipdoc 到 Docker 本地卷可提高并发
       INSTOCK_TDX_DIR: /tdx
       INSTOCK_UNIVERSE_SOURCE: ${INSTOCK_UNIVERSE_SOURCE:-local}
       INSTOCK_BAR_DATA_SOURCE: ${INSTOCK_BAR_DATA_SOURCE:-mootdx}

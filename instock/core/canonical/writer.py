@@ -143,7 +143,7 @@ class CanonicalBarWriter:
         if conn is None:
             raise RuntimeError("无法连接 MySQL，补数写入中止")
         try:
-            existing_map = self._load_existing_map(conn, code)
+            existing_map = self._load_existing_map(conn, code, rows)
             for row in rows:
                 try:
                     self._merge_one(code, row, bid, stats, conn, existing_map)
@@ -158,12 +158,24 @@ class CanonicalBarWriter:
             mdb._release_connection(conn)
         return stats
 
-    def _load_existing_map(self, conn: pymysql.Connection, code: str) -> Dict[Any, Dict[str, Any]]:
+    def _load_existing_map(
+        self,
+        conn: pymysql.Connection,
+        code: str,
+        rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[Any, Dict[str, Any]]:
         sql = f"SELECT * FROM `{TABLE_BAR}` WHERE code=%s AND adjust_type=%s"
+        params: List[Any] = [code, self.adjust_type]
+        if rows:
+            dates = [r.get("date") for r in rows if r.get("date") is not None]
+            if dates:
+                d_min, d_max = min(dates), max(dates)
+                sql += " AND `date` >= %s AND `date` <= %s"
+                params.extend([d_min, d_max])
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            cur.execute(sql, (code, self.adjust_type))
-            rows = cur.fetchall() or []
-        return {r["date"]: r for r in rows}
+            cur.execute(sql, tuple(params))
+            rows_db = cur.fetchall() or []
+        return {r["date"]: r for r in rows_db}
 
     def _record_contribution(
         self,

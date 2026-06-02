@@ -138,10 +138,20 @@ def _sync_one(
     date_to: str,
     also_pickle: bool,
     job_batch_id: str = "",
+    sleep_sec: float = 0.0,
+    prefetch_dates=None,
 ) -> tuple[str, bool, str]:
     try:
+        if sleep_sec > 0:
+            time.sleep(sleep_sec)
         if sync_skip_complete_enabled():
-            plan = plan_canonical_sync(code, date_from, date_to, adjust_type="raw")
+            plan = plan_canonical_sync(
+                code,
+                date_from,
+                date_to,
+                adjust_type="raw",
+                actual_dates=prefetch_dates,
+            )
             if plan.get("skip"):
                 return (
                     code,
@@ -283,6 +293,16 @@ def main():
     finally:
         mdb.end_reuse_connection()
 
+    from instock.core.canonical.sync_plan import resolve_sync_range
+    from instock.core.pipeline import gaps as gap_util
+
+    d0, d1 = resolve_sync_range(args.from_date, args.to_date or "")
+    prefetch_map = (
+        gap_util.batch_canonical_dates_by_code(codes, d0, d1, "raw")
+        if sync_skip_complete_enabled()
+        else {}
+    )
+
     ok_n = fail_n = 0
     done_n = 0
     t0 = time.time()
@@ -311,6 +331,8 @@ def main():
                     args.to_date,
                     args.also_pickle,
                     job_batch_id,
+                    sleep_sec,
+                    prefetch_map.get(c),
                 ): c
                 for c in codes
             }
@@ -322,8 +344,6 @@ def main():
                 else:
                     fail_n += 1
                     _emit(f"[WARN] {prefix} {code} FAIL {msg}")
-                if sleep_sec > 0:
-                    time.sleep(sleep_sec)
                 _emit(
                     f"[PROGRESS] {i}/{total} {code} "
                     f"{'OK' if ok else 'FAIL'} ok={ok_n} fail={fail_n} elapsed={time.time() - t0:.0f}s"

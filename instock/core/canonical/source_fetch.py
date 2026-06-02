@@ -9,6 +9,8 @@ import pandas as pd
 
 from instock.core.data.registry import get_registry
 
+_HC_CACHE: dict[str, bool] = {}
+
 # 作业 --source 别名 → provider_id
 SOURCE_ALIASES = {
     "mootdx": ["mootdx_local", "mootdx_online"],
@@ -45,7 +47,9 @@ def fetch_bars_single_source(
     for pid in chain:
         try:
             prov = reg.get_provider(pid)
-            if not prov.healthcheck():
+            if pid not in _HC_CACHE:
+                _HC_CACHE[pid] = bool(prov.healthcheck())
+            if not _HC_CACHE[pid]:
                 last_err = f"{pid} healthcheck failed"
                 continue
             res = prov.fetch_bars(code, date_from, date_to, adjust=adjust)

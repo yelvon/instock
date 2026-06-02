@@ -19,6 +19,7 @@ _max_output_chars = 20000
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _HISTORY_PATH = os.path.join(_REPO_ROOT, "instock", "log", "sync_job_history.json")
+_RUN_LOG_DIR = os.path.join(_REPO_ROOT, "instock", "log", "sync_job_runs")
 _LOCK = threading.Lock()
 _RUNS: Dict[str, Dict[str, Any]] = {}
 _ORDER: List[str] = []
@@ -235,6 +236,45 @@ def _ensure_log_dir() -> None:
     log_dir = os.path.dirname(_HISTORY_PATH)
     if not os.path.isdir(log_dir):
         os.makedirs(log_dir, exist_ok=True)
+    if not os.path.isdir(_RUN_LOG_DIR):
+        os.makedirs(_RUN_LOG_DIR, exist_ok=True)
+
+
+def _run_log_path(run_id: str) -> str:
+    return os.path.join(_RUN_LOG_DIR, f"{run_id}.log")
+
+
+def _append_run_log(run_id: str, text: str) -> None:
+    _ensure_log_dir()
+    with open(_run_log_path(run_id), "a", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _read_run_log(run_id: str, *, max_chars: int = 0) -> str:
+    path = _run_log_path(run_id)
+    if not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            if max_chars <= 0:
+                return f.read()
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            read_size = min(size, max_chars + 512)
+            f.seek(max(0, size - read_size))
+            chunk = f.read()
+            return chunk[-max_chars:] if len(chunk) > max_chars else chunk
+    except Exception:
+        return ""
+
+
+def _delete_run_log(run_id: str) -> None:
+    path = _run_log_path(run_id)
+    if os.path.isfile(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _truncate(s: str) -> str:
@@ -371,7 +411,35 @@ def init_history() -> None:
 
 
 def list_jobs() -> List[Dict[str, str]]:
-    return list(JOB_ITEMS)
+    _groups = {
+        "execute_daily_job": "流水线",
+        "init_job": "基础",
+        "sync_trade_calendar_job": "基础",
+        "sync_stock_universe_job": "标准库",
+        "basic_data_daily_job": "基础",
+        "selection_data_daily_job": "选股",
+        "basic_data_other_daily_job": "扩展",
+        "basic_data_after_close_daily_job": "盘后",
+        "mootdx_bars_sync_job": "标准库",
+        "sync_bars_mootdx_local_job": "标准库",
+        "sync_bars_mootdx_job": "标准库",
+        "sync_bars_tushare_job": "标准库",
+        "sync_bars_akshare_job": "标准库",
+        "sync_bars_eastmoney_job": "标准库",
+        "derive_qfq_from_tdx_job": "标准库",
+        "sync_tdx_local_pipeline_job": "标准库",
+        "indicators_data_daily_job": "衍生",
+        "klinepattern_data_daily_job": "衍生",
+        "strategy_data_daily_job": "衍生",
+        "backtest_data_daily_job": "衍生",
+        "ingest_tdx_gbbq_job": "标准库",
+    }
+    out: List[Dict[str, str]] = []
+    for j in JOB_ITEMS:
+        row = dict(j)
+        row.setdefault("group", _groups.get(j["id"], "其它"))
+        out.append(row)
+    return out
 
 
 def list_runs(limit: int = 100, *, include_output: bool = False) -> List[Dict[str, Any]]:
@@ -405,12 +473,23 @@ def get_run_for_api(
             return None
         out = dict(r)
     limit = tail_chars if tail_chars > 0 else _max_output_chars
-    tail = out.get("stdout_tail") or ""
-    if len(tail) > limit:
-        out["stdout_tail"] = _truncate(tail)
-        out["stdout_truncated"] = True
+    log_text = _read_run_log(run_id, max_chars=0 if tail_chars <= 0 else limit)
+    if log_text:
+        out["stdout_tail"] = (
+            log_text if tail_chars <= 0 else log_text[-limit:]
+        )
+        if tail_chars <= 0 and len(out["stdout_tail"]) > limit:
+            out["stdout_tail"] = _truncate(out["stdout_tail"])
+            out["stdout_truncated"] = True
+        else:
+            out.setdefault("stdout_truncated", False)
     else:
-        out.setdefault("stdout_truncated", False)
+        tail = out.get("stdout_tail") or ""
+        if len(tail) > limit:
+            out["stdout_tail"] = _truncate(tail) if tail_chars <= 0 else tail[-limit:]
+            out["stdout_truncated"] = True
+        else:
+            out.setdefault("stdout_truncated", False)
     return out
 
 
@@ -473,6 +552,7 @@ def delete_run(run_id: str) -> Tuple[bool, int]:
         except ValueError:
             pass
         _ACTIVE_PROCS.pop(run_id, None)
+    _delete_run_log(run_id)
     _persist()
     return True, freed
 
@@ -718,8 +798,8 @@ def _worker(run_id: str) -> None:
     proc = None
     merged_out = ""
     code = -1
-    last_persist = 0.0
     start_exc: Optional[Exception] = None
+    _delete_run_log(run_id)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -741,16 +821,16 @@ def _worker(run_id: str) -> None:
             if not line:
                 break
             merged_out += line
-            if len(merged_out) > 8_000_000:
-                merged_out = merged_out[-6_000_000:]
-            now = time.time()
+            _append_run_log(run_id, line)
+            if len(merged_out) > 120_000:
+                merged_out = merged_out[-120_000:]
             nbytes, nlines, err_cnt, err_tail, prog_hint, prog_cur, prog_tot = _progress_meta(
                 merged_out
             )
             with _LOCK:
                 r = _RUNS.get(run_id)
                 if r:
-                    r["stdout_tail"] = _truncate(merged_out)
+                    r["stdout_tail"] = merged_out[-4000:]
                     r["progress_bytes"] = nbytes
                     r["progress_lines"] = nlines
                     r["error_line_count"] = err_cnt
@@ -758,9 +838,6 @@ def _worker(run_id: str) -> None:
                     r["progress_hint"] = prog_hint
                     r["progress_current"] = prog_cur
                     r["progress_total"] = prog_tot
-            if now - last_persist > 1.5:
-                last_persist = now
-                _persist()
         code = proc.wait()
         if code is None:
             code = -1
@@ -781,12 +858,12 @@ def _worker(run_id: str) -> None:
         r = _RUNS.get(run_id)
         if r:
             if r.get("status") == "cancelled":
-                r["stdout_tail"] = _truncate(mo)
+                r["stdout_tail"] = _truncate(_read_run_log(run_id) or mo)
                 _persist()
                 return
             r["finished_at"] = datetime.now().isoformat(timespec="seconds")
             r["exit_code"] = code
-            r["stdout_tail"] = _truncate(mo)
+            r["stdout_tail"] = _truncate(_read_run_log(run_id) or mo)
             r["stderr_tail"] = ""
             r["progress_bytes"] = nbytes
             r["progress_lines"] = nlines

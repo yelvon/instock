@@ -121,6 +121,7 @@ const metaLoading = ref(false);
 const metaError = ref<string | null>(null);
 let metaAbort: AbortController | null = null;
 let metaReqId = 0;
+let rowsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const rows = ref<Record<string, unknown>[]>([]);
 const totalRows = ref(0);
@@ -281,6 +282,7 @@ async function loadTableRows(
 onUnmounted(() => {
   metaReqId++;
   rowsReqId++;
+  if (rowsDebounceTimer) clearTimeout(rowsDebounceTimer);
   metaAbort?.abort();
   rowsAbort?.abort();
   metaLoading.value = false;
@@ -330,7 +332,11 @@ watch(
     sortDir.value = null;
     rowsError.value = null;
     if (!name || !meta.value || !canLoadRows()) return;
-    void loadTableRows(name, dateStr.value, 1);
+    if (rowsDebounceTimer) clearTimeout(rowsDebounceTimer);
+    rowsDebounceTimer = setTimeout(() => {
+      rowsDebounceTimer = null;
+      void loadTableRows(name, dateStr.value, 1);
+    }, 400);
   }
 );
 

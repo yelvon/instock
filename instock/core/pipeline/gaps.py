@@ -168,6 +168,52 @@ def _dates_in_canonical_bar_for_code(
     return out
 
 
+def batch_canonical_dates_by_code(
+    codes: list,
+    date_from: datetime.date,
+    date_to: datetime.date,
+    adjust_type: str = "raw",
+) -> dict:
+    """批量查询各 code 在区间内的已有 date，返回 {code: set(date)}。"""
+    from instock.core.canonical.bar_tables import bar_table_has_adjust_column, resolve_bar_table
+
+    norm = [str(c).zfill(6)[:6] for c in (codes or []) if str(c).strip()]
+    out: dict = {c: set() for c in norm}
+    if not norm:
+        return out
+    table = resolve_bar_table(adjust_type)
+    if not mdb.checkTableIsExist(table):
+        return out
+    chunk = 400
+    d0 = date_from.strftime("%Y-%m-%d")
+    d1 = date_to.strftime("%Y-%m-%d")
+    for i in range(0, len(norm), chunk):
+        part = norm[i : i + chunk]
+        placeholders = ",".join(["%s"] * len(part))
+        if bar_table_has_adjust_column(adjust_type):
+            sql = (
+                f"SELECT `code`, `date` FROM `{table}` "
+                f"WHERE `code` IN ({placeholders}) AND `adjust_type`=%s "
+                "AND `date` >= %s AND `date` <= %s"
+            )
+            params = tuple(part) + (adjust_type, d0, d1)
+        else:
+            sql = (
+                f"SELECT `code`, `date` FROM `{table}` "
+                f"WHERE `code` IN ({placeholders}) AND `date` >= %s AND `date` <= %s"
+            )
+            params = tuple(part) + (d0, d1)
+        rows = mdb.executeSqlFetch(sql, params)
+        for r in rows or []:
+            c = str(r[0]).zfill(6)[:6]
+            v = r[1]
+            if isinstance(v, datetime.datetime):
+                v = v.date()
+            if c in out:
+                out[c].add(v)
+    return out
+
+
 def detect_canonical_daily_bar_gaps(
     date_from: datetime.date,
     date_to: datetime.date,

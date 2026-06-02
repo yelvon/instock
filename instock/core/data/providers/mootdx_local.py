@@ -15,13 +15,42 @@ from instock.core.data.provider import FetchResult
 from instock.core.data.providers._base import BaseProvider
 
 
-def _reader():
+_reader_instance = None
+_healthcheck_ok: bool | None = None
+
+
+def get_reader():
+    """进程内复用 mootdx Reader，避免每股重建。"""
+    global _reader_instance
+    if _reader_instance is not None:
+        return _reader_instance
     from mootdx.reader import Reader
 
     d = tdx_dir()
     if not d or not Path(d).is_dir():
         return None
-    return Reader.factory(market="std", tdxdir=d)
+    _reader_instance = Reader.factory(market="std", tdxdir=d)
+    return _reader_instance
+
+
+def _reader():
+    return get_reader()
+
+
+def run_healthcheck_once() -> bool:
+    global _healthcheck_ok
+    if _healthcheck_ok is not None:
+        return _healthcheck_ok
+    r = _reader()
+    if r is None:
+        _healthcheck_ok = False
+        return False
+    try:
+        df = r.daily(symbol="600000")
+        _healthcheck_ok = df is not None and not df.empty
+    except Exception:
+        _healthcheck_ok = False
+    return _healthcheck_ok
 
 
 class Provider(BaseProvider):
@@ -31,14 +60,7 @@ class Provider(BaseProvider):
         return {"daily_bar_raw", "daily_bar", "daily_spot_snapshot_partial"}
 
     def healthcheck(self) -> bool:
-        r = _reader()
-        if r is None:
-            return False
-        try:
-            df = r.daily(symbol="600000")
-            return df is not None and not df.empty
-        except Exception:
-            return False
+        return run_healthcheck_once()
 
     def fetch_bars(
         self,

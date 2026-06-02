@@ -24,6 +24,13 @@ import {
   runMootdxProbePoll,
   startMootdxProbe,
 } from "@/api/mootdxProbe";
+import {
+  nextPollIntervalMs,
+  POLL_INTERVAL_MS,
+  progressKeyFromRun,
+  runDetailUrl,
+} from "@/composables/useJobRunPoll";
+import { useSyncOpsStore } from "@/stores/syncOps";
 
 interface JobItem {
   id: string;
@@ -138,7 +145,9 @@ const detailErrTail = ref("");
 
 const trackingId = ref<string | null>(null);
 const stopping = ref(false);
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let pollIntervalMs = POLL_INTERVAL_MS;
+let lastPollProgressKey = "";
 let pollInFlight = false;
 let pollAbort: AbortController | null = null;
 
@@ -417,13 +426,14 @@ async function pollOnce() {
   pollAbort = new AbortController();
   const abortTimer = setTimeout(() => pollAbort?.abort(), 12000);
   try {
-  const r = await fetch(
-    "/instock/api/sync/run_detail?id=" + encodeURIComponent(trackingId.value),
-    { signal: pollAbort.signal }
-  );
+  const r = await fetch(runDetailUrl(trackingId.value), { signal: pollAbort.signal });
   const j = await r.json();
   if (!j.ok || !j.run) return;
   const row = j.run as RunRow;
+  const pk = progressKeyFromRun(row);
+  const nxt = nextPollIntervalMs(pollIntervalMs, pk, lastPollProgressKey);
+  pollIntervalMs = nxt.intervalMs;
+  lastPollProgressKey = nxt.progressKey;
   const sec = Math.max(
     0,
     Math.floor((Date.now() - Date.parse(row.started_at.replace(" ", "T"))) / 1000)
@@ -452,6 +462,11 @@ async function pollOnce() {
   liveOut.value = row.stdout_tail || "";
   const tail = (row.last_errors_tail || "").trim();
   liveErr.value = tail;
+  if (detailId.value === trackingId.value) {
+    detailOut.value = row.stdout_tail || "";
+    detailErrTail.value = row.stderr_tail || "";
+    if (tail) detailErr.value = "【日志异常相关行】\n" + tail;
+  }
   showErrBox.value =
     !!tail &&
       (row.status === "running" ||
@@ -496,38 +511,44 @@ async function pollOnce() {
   }
 }
 
+function schedulePoll() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void pollOnce().finally(() => {
+      if (trackingId.value) schedulePoll();
+    });
+  }, pollIntervalMs);
+}
+
 function startPoll(id: string) {
   stopPoll();
   trackingId.value = id;
   progressPanel.value = true;
-  void pollOnce();
-  pollTimer = setInterval(() => void pollOnce(), 1200);
+  pollIntervalMs = POLL_INTERVAL_MS;
+  lastPollProgressKey = "";
+  void pollOnce().finally(() => {
+    if (trackingId.value) schedulePoll();
+  });
 }
 
 function stopPoll() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = null;
   pollAbort?.abort();
   pollAbort = null;
   pollInFlight = false;
   trackingId.value = null;
-}
-
-let detailPollTimer: ReturnType<typeof setInterval> | null = null;
-
-function stopDetailPoll() {
-  if (detailPollTimer) {
-    clearInterval(detailPollTimer);
-    detailPollTimer = null;
-  }
+  pollIntervalMs = POLL_INTERVAL_MS;
+  lastPollProgressKey = "";
 }
 
 async function showDetail(id: string) {
-  stopDetailPoll();
   detailId.value = id;
-  const r = await fetch("/instock/api/sync/run_detail?id=" + encodeURIComponent(id));
+  if (id === trackingId.value) {
+    return;
+  }
+  const r = await fetch(runDetailUrl(id, 0));
   const j = await r.json();
   if (!j.ok) {
     detailErr.value = j.error || "";
@@ -541,9 +562,6 @@ async function showDetail(id: string) {
   detailErr.value = parts.length ? parts.join("\n\n") : "（无）";
   detailOut.value = row.stdout_tail || "";
   detailErrTail.value = row.stderr_tail || "";
-  if (row.status === "running") {
-    detailPollTimer = setInterval(() => void showDetail(id), 1500);
-  }
 }
 
 async function cancelRun() {
@@ -1070,11 +1088,12 @@ async function saveScheduler() {
 
 onMounted(async () => {
   document.documentElement.classList.add("dark");
-  await loadJobs();
+  const syncOps = useSyncOpsStore();
+  await syncOps.bootstrapOps();
+  jobs.value = syncOps.jobs as JobItem[];
+  runs.value = syncOps.runs as RunRow[];
   await loadPrefs();
-  await loadRuns();
   await loadCookie();
-  await loadScheduler();
   initDhDates();
   void loadGovEnv();
 });
@@ -1177,82 +1196,18 @@ onUnmounted(() => {
 
     <el-card shadow="never" class="block">
       <template #header>
-        <span>应用内定时任务</span>
+        <span>定时任务</span>
       </template>
-      <el-switch
-        v-model="schedGlobal"
-        active-text="启用总开关"
-        style="margin-bottom: 12px"
-        @change="schedMsg = '请点保存使总开关生效'"
+      <el-alert
+        type="info"
+        show-icon
+        :closable="false"
+        title="定时任务已集中到「作业与定时」"
+        description="此处专注快照/Cookie 偏好；触发记录、心跳与编辑请在「数据运维 → 作业与定时」查看。"
       />
-      <el-table :data="schedDraft" stripe border size="small" class="sched-table">
-        <el-table-column prop="enabled" label="启用" width="70" align="center">
-          <template #default="{ row }">
-            <el-checkbox v-model="row.enabled" />
-          </template>
-        </el-table-column>
-        <el-table-column prop="title" label="名称" min-width="120" />
-        <el-table-column prop="job_id" label="作业" width="160" show-overflow-tooltip />
-        <el-table-column label="星期" width="100">
-          <template #default="{ row }">
-            {{ (row.weekdays || []).map((n: number) => ["一", "二", "三", "四", "五", "六", "日"][n]).join("") }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="times" label="时刻" min-width="140">
-          <template #default="{ row }">{{ (row.times || []).join(", ") }}</template>
-        </el-table-column>
-        <el-table-column prop="spot_data_source" label="快照源" width="88" />
-        <el-table-column label="K线源" width="72">
-          <template #default="{ row }">
-            {{ row.job_id === "mootdx_bars_sync_job" ? row.bar_data_source || "auto" : "—" }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="80" align="center">
-          <template #default="{ $index }">
-            <el-button type="danger" link @click="removeSched($index)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="sched-form">
-        <el-input v-model="schTitle" placeholder="名称" style="width: 200px" />
-        <el-select v-model="schJobId" style="width: 200px" placeholder="作业">
-          <el-option v-for="j in jobs" :key="j.id" :label="j.title" :value="j.id" />
-        </el-select>
-        <el-select v-model="schSpot" style="width: 140px" placeholder="快照源">
-          <el-option label="东财" value="eastmoney" />
-          <el-option label="宝上" value="baostock" />
-          <el-option label="东财→宝上" value="auto" />
-        </el-select>
-        <el-select
-          v-show="schJobId === 'mootdx_bars_sync_job'"
-          v-model="schBar"
-          style="width: 130px"
-          placeholder="K线源"
-        >
-          <el-option label="仅 Tushare" value="tushare" />
-          <el-option label="自动" value="auto" />
-          <el-option label="仅 mootdx" value="mootdx" />
-        </el-select>
-        <el-button @click="addSched">加入列表</el-button>
-        <el-button type="primary" @click="saveScheduler">保存全部定时配置</el-button>
-      </div>
-      <div class="wd-line">
-        <span class="wd-label">星期：</span>
-        <el-checkbox-group v-model="schWeekdays" size="small">
-          <el-checkbox v-for="o in wdOptions" :key="o.v" :value="o.v">周{{ o.l }}</el-checkbox>
-        </el-checkbox-group>
-      </div>
-      <el-input
-        v-model="schTimes"
-        type="textarea"
-        :rows="3"
-        placeholder="每行一个 HH:MM，如 09:30"
-        class="mono"
-      />
-      <el-text type="info" size="small" style="margin-top: 8px; display: block">{{
-        schedMsg
-      }}</el-text>
+      <el-button type="primary" link class="mt" @click="goOps(router, 'jobs', { jobTab: 'schedule' })">
+        前往作业与定时
+      </el-button>
     </el-card>
 
     <el-alert

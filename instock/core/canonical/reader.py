@@ -7,7 +7,6 @@ import os
 from typing import Optional
 
 import pandas as pd
-import pymysql
 
 import instock.lib.database as mdb
 from instock.core.canonical.bar_tables import bar_table_has_adjust_column, resolve_bar_table
@@ -71,7 +70,7 @@ def load_canonical_bars(
         params.append(de_fmt)
     sql += " ORDER BY date ASC"
 
-    with pymysql.connect(**mdb.MYSQL_CONN_DBAPI) as conn:
+    with mdb.connection_ctx() as conn:
         df = pd.read_sql(sql, conn, params=params)
     if df is None or df.empty:
         return pd.DataFrame(columns=HIST_COLS)

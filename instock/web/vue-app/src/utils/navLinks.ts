@@ -38,8 +38,12 @@ export function goHome(router: Router) {
   void router.push("/home");
 }
 
-export function goOps(router: Router, tab: OpsTab = "quick") {
-  void router.push({ path: "/ops", query: { tab } });
+export function goOps(
+  router: Router,
+  tab: OpsTab = "quick",
+  extra?: Record<string, string>
+) {
+  void router.push({ path: "/ops", query: { tab, ...(extra || {}) } });
 }
 
 export function goSync(router: Router) {

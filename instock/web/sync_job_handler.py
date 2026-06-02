@@ -74,6 +74,21 @@ class DataHealthApiHandler(webBase.BaseHandler, ABC):
             self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 
 
+class EnvHealthApiHandler(webBase.BaseHandler, ABC):
+    """GET /instock/api/sync/health — 环境健康与建议作业。"""
+
+    def get(self):
+        import instock.web.health_service as hs
+
+        self.set_header("Content-Type", "application/json;charset=UTF-8")
+        try:
+            rep = hs.build_health_report()
+            self.write(json.dumps({"ok": True, **rep}, ensure_ascii=False))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+
+
 class SyncRunDetailApiHandler(webBase.BaseHandler, ABC):
     def get(self):
         syncsvc.init_history()

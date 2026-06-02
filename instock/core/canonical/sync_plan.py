@@ -80,18 +80,24 @@ def plan_canonical_sync(
     date_to: str,
     *,
     adjust_type: str = "raw",
+    actual_dates=None,
 ) -> Dict[str, Any]:
     """
     返回是否可跳过拉取、缺失交易日列表。
     skip=True 表示区间内标准表已覆盖全部期望交易日。
+    actual_dates: 可选，预加载的该 code 已有 date 集合（批量 gap 优化）。
     """
     d0, d1 = resolve_sync_range(date_from, date_to)
     code = str(code).zfill(6)[:6]
     expected = gaps._expected_trade_dates(d0, d1)
-    _, _, per_code = gaps.detect_canonical_daily_bar_gaps(
-        d0, d1, adjust_type=adjust_type, codes=[code]
-    )
-    missing = list(per_code.get(code) or [])
+    exp_set = set(expected)
+    if actual_dates is not None:
+        missing = sorted(d.isoformat() for d in (exp_set - set(actual_dates)))
+    else:
+        _, _, per_code = gaps.detect_canonical_daily_bar_gaps(
+            d0, d1, adjust_type=adjust_type, codes=[code]
+        )
+        missing = list(per_code.get(code) or [])
     skip = len(missing) == 0 and len(expected) > 0
     return {
         "code": code,

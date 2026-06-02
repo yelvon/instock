@@ -19,7 +19,12 @@ sys.path.append(cpath)
 log_path = os.path.join(cpath_current, 'log')
 if not os.path.exists(log_path):
     os.makedirs(log_path)
-logging.basicConfig(format='%(asctime)s %(message)s', filename=os.path.join(log_path, 'stock_web.log'))
+from logging.handlers import RotatingFileHandler
+
+_web_log = os.path.join(log_path, 'stock_web.log')
+_handler = RotatingFileHandler(_web_log, maxBytes=5 * 1024 * 1024, backupCount=5, encoding='utf-8')
+_handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+logging.root.addHandler(_handler)
 logging.getLogger().setLevel(logging.ERROR)
 import instock.lib.torndb as torndb
 import instock.lib.database as mdb
@@ -70,6 +75,7 @@ class Application(tornado.web.Application):
             (r"/instock/api/sync/prune_runs", syncJobHandler.SyncPruneRunsHandler),
             (r"/instock/api/sync/cookie", syncJobHandler.SyncCookieApiHandler),
             (r"/instock/api/sync/prefs", syncJobHandler.SyncPrefsApiHandler),
+            (r"/instock/api/sync/health", syncJobHandler.EnvHealthApiHandler),
             (r"/instock/api/sync/scheduler", syncJobHandler.SchedulerConfigApiHandler),
             (r"/instock/api/sync/data_batches", syncJobHandler.DataBatchesApiHandler),
             (r"/instock/api/sync/governance_env", syncJobHandler.DataGovernanceEnvApiHandler),

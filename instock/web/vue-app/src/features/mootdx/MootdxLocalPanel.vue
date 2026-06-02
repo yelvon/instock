@@ -170,6 +170,14 @@ onMounted(() => void loadStatus());
       </template>
     </el-alert>
 
+    <el-alert
+      type="warning"
+      show-icon
+      :closable="false"
+      class="mb"
+      title="Mac / Parallels SMB 挂载建议 workers=1"
+      description="若补数出现 Errno 5 EIO，请在 docker/.env 设 INSTOCK_MOOTDX_LOCAL_WORKERS=1；复制 vipdoc 到 Docker 本地卷后可提高并发。"
+    />
     <el-row :gutter="16">
       <el-col :span="14">
         <el-card shadow="never" class="inner">

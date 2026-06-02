@@ -57,25 +57,11 @@ class QfqBarWriter:
         else:
             return stats
 
-        conn = pymysql.connect(**mdb.MYSQL_CONN_DBAPI)
+        conn = mdb.get_connection()
+        if conn is None:
+            raise RuntimeError("无法连接 MySQL，qfq 写入中止")
         try:
-            with conn.cursor() as cur:
-                for _, row in work.iterrows():
-                    dt = row.get("_dt")
-                    if dt is None:
-                        stats.errors += 1
-                        continue
-                    try:
-                        vals = {
-                            "open": row.get("open"),
-                            "close": row.get("close"),
-                            "high": row.get("high"),
-                            "low": row.get("low"),
-                            "volume": row.get("volume"),
-                            "amount": row.get("amount"),
-                        }
-                        cur.execute(
-                            f"""
+            sql = f"""
                             INSERT INTO `{TABLE_BAR_QFQ}`
                             (date, code, open, close, high, low, volume, amount,
                              quality_status, completeness_score, primary_source, source_mask,
@@ -89,33 +75,41 @@ class QfqBarWriter:
                               derived_from_batch_id=VALUES(derived_from_batch_id),
                               last_batch_id=VALUES(last_batch_id),
                               updated_at=CURRENT_TIMESTAMP
-                            """,
-                            (
-                                dt,
-                                code,
-                                vals["open"],
-                                vals["close"],
-                                vals["high"],
-                                vals["low"],
-                                vals["volume"],
-                                vals["amount"],
-                                PROVIDER_QFQ_DERIVED,
-                                json.dumps([PROVIDER_QFQ_DERIVED]),
-                                self.factor_version,
-                                bid,
-                                bid,
-                            ),
-                        )
-                        stats.upserted += 1
-                    except Exception as e:
-                        stats.errors += 1
-                        logger.warning("qfq upsert %s %s: %s", code, dt, e)
+                            """
+            mask_json = json.dumps([PROVIDER_QFQ_DERIVED])
+            batch_params = []
+            for _, row in work.iterrows():
+                dt = row.get("_dt")
+                if dt is None:
+                    stats.errors += 1
+                    continue
+                batch_params.append(
+                    (
+                        dt,
+                        code,
+                        row.get("open"),
+                        row.get("close"),
+                        row.get("high"),
+                        row.get("low"),
+                        row.get("volume"),
+                        row.get("amount"),
+                        PROVIDER_QFQ_DERIVED,
+                        mask_json,
+                        self.factor_version,
+                        bid,
+                        bid,
+                    )
+                )
+            with conn.cursor() as cur:
+                if batch_params:
+                    cur.executemany(sql, batch_params)
+                    stats.upserted += len(batch_params)
             conn.commit()
         except Exception:
             conn.rollback()
             raise
         finally:
-            conn.close()
+            mdb._release_connection(conn)
         return stats
 
     def write_factor_rows(

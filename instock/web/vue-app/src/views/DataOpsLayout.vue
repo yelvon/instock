@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import PageShell from "@/components/ui/PageShell.vue";
 import SyncView from "@/views/SyncView.vue";
 import JobCenterView from "@/views/JobCenterView.vue";
 import type { OpsTab } from "@/utils/navLinks";
 import { normalizeOpsTab } from "@/utils/navLinks";
+import { useSyncOpsStore } from "@/stores/syncOps";
 
 const route = useRoute();
 const router = useRouter();
+const syncOps = useSyncOpsStore();
+
+onMounted(() => {
+  void syncOps.bootstrapOps();
+});
 
 const OPS_TABS: { name: OpsTab; label: string }[] = [
   { name: "quick", label: "快捷同步" },
@@ -21,7 +27,7 @@ const OPS_TABS: { name: OpsTab; label: string }[] = [
 const activeTab = computed({
   get: () => normalizeOpsTab(String(route.query.tab || "quick")),
   set: (tab: OpsTab) => {
-    void router.replace({ path: "/ops", query: { tab } });
+    void router.replace({ path: "/ops", query: { ...route.query, tab } });
   },
 });
 

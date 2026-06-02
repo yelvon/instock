@@ -17,6 +17,13 @@ import {
 } from "@/api/mootdxProbe";
 import MootdxLocalPanel from "@/features/mootdx/MootdxLocalPanel.vue";
 import type { OpsTab } from "@/utils/navLinks";
+import {
+  nextPollIntervalMs,
+  POLL_INTERVAL_MS,
+  progressKeyFromRun,
+  runDetailUrl,
+} from "@/composables/useJobRunPoll";
+import { useSyncOpsStore } from "@/stores/syncOps";
 
 const props = withDefaults(
   defineProps<{
@@ -219,6 +226,21 @@ const SPOT_EASTMONEY_JOBS = new Set([
 
 const usesEastmoneySpotJob = computed(() => SPOT_EASTMONEY_JOBS.has(jobId.value));
 
+const jobGroups = computed(() => {
+  const m = new Map<string, JobItem[]>();
+  for (const j of jobs.value) {
+    const g = (j as JobItem & { group?: string }).group || "其它";
+    if (!m.has(g)) m.set(g, []);
+    m.get(g)!.push(j);
+  }
+  return [...m.entries()];
+});
+
+const envHealth = ref<{
+  checks?: Record<string, { ok?: boolean; error?: string; hint?: string }>;
+  suggestions?: string[];
+} | null>(null);
+
 const runs = ref<RunRow[]>([]);
 const selectedRunIds = ref<string[]>([]);
 const detailId = ref("");
@@ -228,7 +250,9 @@ const detailOut = ref("");
 
 const trackingId = ref<string | null>(null);
 const stopping = ref(false);
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let pollIntervalMs = POLL_INTERVAL_MS;
+let lastPollProgressKey = "";
 let pollInFlight = false;
 let pollAbort: AbortController | null = null;
 const progressPanel = ref(false);
@@ -434,9 +458,8 @@ function triggerLabel(r: RunRow): string {
 }
 
 async function loadJobs() {
-  const r = await fetch("/instock/api/sync/jobs");
-  const j = await r.json();
-  if (j.ok && Array.isArray(j.jobs)) jobs.value = j.jobs;
+  const syncOps = useSyncOpsStore();
+  jobs.value = (await syncOps.loadJobs(true)) as JobItem[];
 }
 
 async function loadPrefs() {
@@ -449,13 +472,11 @@ async function loadPrefs() {
 }
 
 async function loadRuns() {
-  const r = await fetch("/instock/api/sync/runs?limit=100");
-  const j = await r.json();
-  if (j.ok && Array.isArray(j.runs)) {
-    runs.value = j.runs;
-    const run = j.runs.find((x: RunRow) => x.status === "running");
-    if (run && !trackingId.value) startPoll(run.id);
-  }
+  const syncOps = useSyncOpsStore();
+  syncOps.invalidateRuns();
+  runs.value = (await syncOps.loadRuns(100, true)) as RunRow[];
+  const run = runs.value.find((x) => x.status === "running");
+  if (run && !trackingId.value) startPoll(run.id);
 }
 
 async function loadBatches() {
@@ -497,6 +518,17 @@ async function loadDataSources() {
     dsMsg.value = String(e);
   } finally {
     dsLoading.value = false;
+  }
+  void loadEnvHealth();
+}
+
+async function loadEnvHealth() {
+  try {
+    const r = await fetch("/instock/api/sync/health");
+    const j = await r.json();
+    if (j.ok) envHealth.value = j;
+  } catch {
+    envHealth.value = null;
   }
 }
 
@@ -688,13 +720,14 @@ async function pollOnce() {
   pollAbort = new AbortController();
   const abortTimer = setTimeout(() => pollAbort?.abort(), 12000);
   try {
-  const r = await fetch(
-    "/instock/api/sync/run_detail?id=" + encodeURIComponent(trackingId.value),
-    { signal: pollAbort.signal }
-  );
+  const r = await fetch(runDetailUrl(trackingId.value), { signal: pollAbort.signal });
   const j = await r.json();
   if (!j.ok || !j.run) return;
   const row = j.run as RunRow;
+  const pk = progressKeyFromRun(row);
+  const nxt = nextPollIntervalMs(pollIntervalMs, pk, lastPollProgressKey);
+  pollIntervalMs = nxt.intervalMs;
+  lastPollProgressKey = nxt.progressKey;
   runningLabel.value = row.label || row.job_id || "";
   const sec = Math.max(
     0,
@@ -724,6 +757,11 @@ async function pollOnce() {
   liveOut.value = row.stdout_tail || "";
   const tail = (row.last_errors_tail || "").trim();
   liveErr.value = tail;
+  if (detailId.value === trackingId.value) {
+    detailOut.value = row.stdout_tail || "";
+    detailErrTail.value = row.stderr_tail || "";
+    if (tail) detailErr.value = "【日志异常相关行】\n" + tail;
+  }
   showErrBox.value =
     !!tail &&
     (row.status === "running" || row.status === "failed" || row.status === "cancelled");
@@ -751,13 +789,26 @@ async function pollOnce() {
   }
 }
 
+function schedulePoll() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void pollOnce().finally(() => {
+      if (trackingId.value) schedulePoll();
+    });
+  }, pollIntervalMs);
+}
+
 function startPoll(id: string, label?: string) {
   stopPoll();
   trackingId.value = id;
   runningLabel.value = label || "";
   progressPanel.value = true;
-  void pollOnce();
-  pollTimer = setInterval(() => void pollOnce(), 1200);
+  pollIntervalMs = POLL_INTERVAL_MS;
+  lastPollProgressKey = "";
+  void pollOnce().finally(() => {
+    if (trackingId.value) schedulePoll();
+  });
 }
 
 function onMootdxRunStarted(runId: string, label: string) {
@@ -765,17 +816,20 @@ function onMootdxRunStarted(runId: string, label: string) {
 }
 
 function stopPoll() {
-  if (pollTimer) clearInterval(pollTimer);
+  if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
   pollAbort?.abort();
   pollAbort = null;
   pollInFlight = false;
   trackingId.value = null;
+  pollIntervalMs = POLL_INTERVAL_MS;
+  lastPollProgressKey = "";
 }
 
 async function showDetail(id: string) {
   detailId.value = id;
-  const r = await fetch("/instock/api/sync/run_detail?id=" + encodeURIComponent(id));
+  const full = id !== trackingId.value;
+  const r = await fetch(runDetailUrl(id, full ? 0 : 2048));
   const j = await r.json();
   if (!j.ok) return;
   const row = j.run as RunRow;
@@ -978,9 +1032,11 @@ watch(
 
 onMounted(async () => {
   document.documentElement.classList.add("dark");
-  await loadJobs();
+  const syncOps = useSyncOpsStore();
+  await syncOps.bootstrapOps();
+  jobs.value = syncOps.jobs as JobItem[];
+  runs.value = syncOps.runs as RunRow[];
   await loadPrefs();
-  await loadRuns();
   await loadScheduler();
   initDhDates();
   void loadGovEnv();
@@ -1065,21 +1121,12 @@ onUnmounted(() => {
           <el-form label-width="100px" class="mt">
             <el-form-item label="作业">
               <el-select v-model="jobId" filterable style="width: 100%; max-width: 480px">
-                <el-option-group label="通达信 / 标准库">
-                  <el-option
-                    v-for="j in jobs.filter((x) => MOOTDX_LOCAL_JOBS.has(x.id))"
-                    :key="j.id"
-                    :label="j.title"
-                    :value="j.id"
-                  />
-                </el-option-group>
-                <el-option-group label="其它作业">
-                  <el-option
-                    v-for="j in jobs.filter((x) => !MOOTDX_LOCAL_JOBS.has(x.id))"
-                    :key="j.id"
-                    :label="j.title"
-                    :value="j.id"
-                  />
+                <el-option-group
+                  v-for="[g, items] in jobGroups"
+                  :key="g"
+                  :label="g"
+                >
+                  <el-option v-for="j in items" :key="j.id" :label="j.title" :value="j.id" />
                 </el-option-group>
               </el-select>
             </el-form-item>
@@ -1354,6 +1401,22 @@ onUnmounted(() => {
         </el-tab-pane>
 
         <el-tab-pane v-if="tabVisible('sources')" label="数据源" name="sources">
+          <el-card v-if="envHealth" shadow="never" class="mt env-health-card">
+            <template #header>环境健康</template>
+            <el-space wrap>
+              <el-tag
+                v-for="(chk, name) in envHealth.checks || {}"
+                :key="name"
+                :type="chk.ok ? 'success' : 'danger'"
+                size="small"
+              >
+                {{ name }}: {{ chk.ok ? "OK" : "异常" }}
+              </el-tag>
+            </el-space>
+            <ul v-if="envHealth.suggestions?.length" class="health-suggestions mt">
+              <li v-for="(s, i) in envHealth.suggestions" :key="i">{{ s }}</li>
+            </ul>
+          </el-card>
           <el-space wrap class="mt">
             <el-button :icon="Refresh" :loading="dsLoading" @click="loadDataSources">刷新状态</el-button>
             <el-input v-model="verifyCode" placeholder="检测样本代码" style="width: 140px" class="mono" />
