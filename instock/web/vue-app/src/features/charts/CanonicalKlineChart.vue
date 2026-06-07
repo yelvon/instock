@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { use } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { CandlestickChart, BarChart, LineChart } from "echarts/charts";
 import {
   GridComponent,
   LegendComponent,
+  MarkPointComponent,
   TooltipComponent,
   DataZoomComponent,
 } from "echarts/components";
 import VChart from "vue-echarts";
 import type { ECBasicOption } from "echarts/types/dist/shared";
+import { FullScreen, RefreshRight } from "@element-plus/icons-vue";
 import { getCanonicalKline } from "@/api/canonical";
 import {
   buildKlineEchartsOption,
@@ -27,9 +29,12 @@ use([
   LineChart,
   GridComponent,
   LegendComponent,
+  MarkPointComponent,
   TooltipComponent,
   DataZoomComponent,
 ]);
+
+type ChartExpose = { chart?: { resize: () => void; dispatchAction: (p: object) => void } };
 
 const props = withDefaults(
   defineProps<{
@@ -38,7 +43,6 @@ const props = withDefaults(
     dateTo?: string;
     adjustType?: string;
     period?: KlinePeriod;
-    /** 外部已拉取的数据（如回测 API），设置后不再请求 canonical/kline */
     payload?: KlineSeriesPayload | null;
     marks?: KlineMark[];
     loading?: boolean;
@@ -48,12 +52,14 @@ const props = withDefaults(
     title?: string;
     subtitle?: string;
     showPeriodToggle?: boolean;
+    showFullscreen?: boolean;
     embedded?: boolean;
   }>(),
   {
     adjustType: "raw",
     period: "daily",
     showPeriodToggle: true,
+    showFullscreen: true,
     embedded: false,
   }
 );
@@ -75,6 +81,9 @@ const internalError = ref("");
 const internalPayload = ref<KlineSeriesPayload | null>(null);
 const internalEmpty = ref(false);
 const internalHint = ref("");
+const fullscreenVisible = ref(false);
+const chartRef = ref<ChartExpose | null>(null);
+const fullscreenChartRef = ref<ChartExpose | null>(null);
 
 const useExternal = computed(() => props.payload !== undefined);
 
@@ -147,11 +156,18 @@ const isLoading = computed(() => props.loading ?? internalLoading.value);
 const errorText = computed(() => props.error ?? internalError.value);
 const isEmpty = computed(() => props.empty ?? internalEmpty.value);
 const emptyHint = computed(() => props.hint ?? internalHint.value);
+const canShowChart = computed(() => !!seriesPayload.value?.dates?.length && !errorText.value && !isEmpty.value);
 
 const chartOption = computed<ECBasicOption>(() => {
   const p = seriesPayload.value;
   if (!p) return {};
-  return buildKlineEchartsOption(p);
+  return buildKlineEchartsOption(p, "default");
+});
+
+const fullscreenChartOption = computed<ECBasicOption>(() => {
+  const p = seriesPayload.value;
+  if (!p) return {};
+  return buildKlineEchartsOption(p, "large");
 });
 
 const metaLine = computed(() => {
@@ -165,6 +181,38 @@ const metaLine = computed(() => {
   }
   return parts.filter(Boolean).join(" · ");
 });
+
+function dispatchZoom(chart: ChartExpose | null, start: number, end: number) {
+  chart?.chart?.dispatchAction({ type: "dataZoom", start, end });
+}
+
+function resetZoom(target: "inline" | "fullscreen" | "both" = "both") {
+  if (target === "inline" || target === "both") dispatchZoom(chartRef.value, 0, 100);
+  if (target === "fullscreen" || target === "both") dispatchZoom(fullscreenChartRef.value, 0, 100);
+}
+
+async function openFullscreen() {
+  if (!canShowChart.value) return;
+  fullscreenVisible.value = true;
+  await nextTick();
+  chartRef.value?.chart?.resize();
+  fullscreenChartRef.value?.chart?.resize();
+}
+
+async function onFullscreenOpened() {
+  await nextTick();
+  fullscreenChartRef.value?.chart?.resize();
+}
+
+function onFullscreenClosed() {
+  nextTick(() => chartRef.value?.chart?.resize());
+}
+
+const periodOptions = [
+  { label: "日 K", value: "daily" },
+  { label: "周 K", value: "weekly" },
+  { label: "月 K", value: "monthly" },
+];
 </script>
 
 <template>
@@ -176,14 +224,19 @@ const metaLine = computed(() => {
           v-if="showPeriodToggle"
           v-model="periodLocal"
           size="small"
-          :options="[
-            { label: '日 K', value: 'daily' },
-            { label: '周 K', value: 'weekly' },
-            { label: '月 K', value: 'monthly' },
-          ]"
+          :options="periodOptions"
         />
         <el-text v-if="metaLine" type="info" size="small">{{ metaLine }}</el-text>
         <el-text v-if="subtitle" type="info" size="small">{{ subtitle }}</el-text>
+        <el-button
+          v-if="showFullscreen && canShowChart"
+          size="small"
+          :icon="FullScreen"
+          class="head-action"
+          @click="openFullscreen"
+        >
+          全屏
+        </el-button>
       </div>
     </template>
     <div v-if="embedded" class="kline-head embedded-head">
@@ -192,13 +245,18 @@ const metaLine = computed(() => {
         v-if="showPeriodToggle"
         v-model="periodLocal"
         size="small"
-        :options="[
-          { label: '日 K', value: 'daily' },
-          { label: '周 K', value: 'weekly' },
-          { label: '月 K', value: 'monthly' },
-        ]"
+        :options="periodOptions"
       />
       <el-text v-if="metaLine" type="info" size="small">{{ metaLine }}</el-text>
+      <el-button
+        v-if="showFullscreen && canShowChart"
+        size="small"
+        :icon="FullScreen"
+        class="head-action"
+        @click="openFullscreen"
+      >
+        全屏
+      </el-button>
     </div>
     <div v-loading="isLoading" class="kline-body">
       <el-alert v-if="errorText" type="error" :title="errorText" show-icon :closable="false" />
@@ -213,15 +271,51 @@ const metaLine = computed(() => {
         v-else-if="!seriesPayload?.dates?.length && !isLoading"
         description="请填写股票代码与日期区间"
       />
-      <v-chart
-        v-else-if="seriesPayload?.dates?.length"
-        class="kline-chart"
-        :option="chartOption"
-        autoresize
-      />
+      <template v-else-if="canShowChart">
+        <v-chart
+          ref="chartRef"
+          class="kline-chart"
+          :option="chartOption"
+          autoresize
+        />
+        <p class="zoom-hint muted">滚轮缩放 · 拖拽平移 · 底部滑块选区间</p>
+      </template>
       <slot name="footer" />
     </div>
   </component>
+
+  <el-dialog
+    v-model="fullscreenVisible"
+    class="kline-fullscreen-dialog"
+    fullscreen
+    destroy-on-close
+    :show-close="true"
+    @opened="onFullscreenOpened"
+    @closed="onFullscreenClosed"
+  >
+    <template #header>
+      <div class="fs-head">
+        <span class="fs-title">{{ title || "K 线" }} · 全屏</span>
+        <el-segmented v-if="showPeriodToggle" v-model="periodLocal" size="small" :options="periodOptions" />
+        <el-text v-if="metaLine" type="info" size="small">{{ metaLine }}</el-text>
+        <div class="fs-actions">
+          <el-button size="small" :icon="RefreshRight" @click="resetZoom('fullscreen')">重置缩放</el-button>
+        </div>
+      </div>
+    </template>
+    <div v-loading="isLoading" class="fs-body">
+      <v-chart
+        v-if="canShowChart"
+        ref="fullscreenChartRef"
+        class="kline-chart-fs"
+        :option="fullscreenChartOption"
+        autoresize
+      />
+      <p class="zoom-hint fs-hint muted">
+        鼠标滚轮缩放 · 按住拖拽平移 · 拖动底部滑块选择日期区间 · B 买 / S 卖
+      </p>
+    </div>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -231,7 +325,8 @@ const metaLine = computed(() => {
   border-radius: 8px;
 }
 .kline-head,
-.embedded-head {
+.embedded-head,
+.fs-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -240,16 +335,50 @@ const metaLine = computed(() => {
 .embedded-head {
   margin-bottom: 8px;
 }
-.kline-title {
+.kline-title,
+.fs-title {
   font-weight: 600;
   font-size: 14px;
   color: #e8eef5;
 }
+.fs-title {
+  font-size: 16px;
+}
+.head-action {
+  margin-left: auto;
+}
+.fs-actions {
+  margin-left: auto;
+}
 .kline-chart {
-  height: 420px;
+  height: 480px;
   width: 100%;
 }
-.kline-body {
+.kline-chart-fs {
+  height: calc(100vh - 140px);
+  min-height: 420px;
+  width: 100%;
+}
+.kline-body,
+.fs-body {
   min-height: 120px;
+}
+.zoom-hint {
+  margin: 6px 4px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.fs-hint {
+  margin-top: 8px;
+}
+.muted {
+  color: var(--el-text-color-secondary);
+}
+</style>
+
+<style>
+.kline-fullscreen-dialog .el-dialog__body {
+  padding-top: 8px;
+  padding-bottom: 12px;
 }
 </style>

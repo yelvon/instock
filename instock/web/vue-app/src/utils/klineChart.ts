@@ -33,6 +33,8 @@ export interface KlineSeriesPayload {
   period?: KlinePeriod;
 }
 
+export type KlineChartLayout = "default" | "large";
+
 export function sma(values: number[], period: number): (number | null)[] {
   const out: (number | null)[] = [];
   for (let i = 0; i < values.length; i++) {
@@ -58,7 +60,6 @@ function barHigh(row: number[]): number {
 
 /**
  * 同花顺风格买卖点：B 红、S 绿，贴在 K 线下方/上方。
- * 使用 category 轴下标定位，避免日期字符串与 coord 不匹配导致不显示。
  */
 function buildTradeMarkPoints(
   dates: string[],
@@ -80,11 +81,10 @@ function buildTradeMarkPoints(
       : Math.max(m.price > 0 ? m.price : high, high) * 1.015;
     out.push({
       name: isBuy ? "买" : "卖",
-      xAxis: idx,
-      yAxis: y,
+      coord: [dates[idx], y],
       value: `${isBuy ? "B" : "S"} ${m.qty}`,
       symbol: "circle",
-      symbolSize: 20,
+      symbolSize: 22,
       itemStyle: {
         color: isBuy ? "#e53935" : "#43a047",
         borderColor: "#ffffff",
@@ -97,15 +97,18 @@ function buildTradeMarkPoints(
         fontSize: 11,
         fontWeight: "bold",
       },
-      z: 10,
     });
   }
   return out;
 }
 
-export function buildKlineEchartsOption(p: KlineSeriesPayload): ECBasicOption {
+export function buildKlineEchartsOption(
+  p: KlineSeriesPayload,
+  layout: KlineChartLayout = "default"
+): ECBasicOption {
   if (!p.dates?.length) return {};
 
+  const large = layout === "large";
   const closes = p.ohlc.map((row) => row[1]);
   const markPoints = buildTradeMarkPoints(p.dates, p.ohlc, p.marks);
 
@@ -147,10 +150,15 @@ export function buildKlineEchartsOption(p: KlineSeriesPayload): ECBasicOption {
     },
     tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
-    grid: [
-      { left: 56, right: 24, top: 56, height: "50%" },
-      { left: 56, right: 24, top: "72%", height: "16%" },
-    ],
+    grid: large
+      ? [
+          { left: 64, right: 32, top: 64, height: "58%" },
+          { left: 64, right: 32, top: "76%", height: "14%" },
+        ]
+      : [
+          { left: 56, right: 24, top: 56, height: "50%" },
+          { left: 56, right: 24, top: "72%", height: "16%" },
+        ],
     xAxis: [
       {
         type: "category",
@@ -172,8 +180,24 @@ export function buildKlineEchartsOption(p: KlineSeriesPayload): ECBasicOption {
       { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
     ],
     dataZoom: [
-      { type: "inside", xAxisIndex: [0, 1], start: 0, end: 100 },
-      { type: "slider", xAxisIndex: [0, 1], bottom: 4, height: 18 },
+      {
+        type: "inside",
+        xAxisIndex: [0, 1],
+        start: 0,
+        end: 100,
+        zoomOnMouseWheel: true,
+        moveOnMouseMove: true,
+        moveOnMouseWheel: true,
+      },
+      {
+        type: "slider",
+        xAxisIndex: [0, 1],
+        bottom: large ? 12 : 4,
+        height: large ? 28 : 18,
+        borderColor: "#3a4553",
+        fillerColor: "rgba(64,158,255,0.15)",
+        handleSize: large ? "110%" : "100%",
+      },
     ],
     series: [
       {
