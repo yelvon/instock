@@ -102,6 +102,7 @@ export interface BacktestStrategyItem {
   source?: string;
   paramSchema: Record<string, number | string | boolean>;
   params?: StrategyParamDef[];
+  dependencyDomains?: string[];
 }
 
 export async function listBacktestStrategies(): Promise<BacktestStrategyItem[]> {

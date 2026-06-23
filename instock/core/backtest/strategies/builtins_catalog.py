@@ -100,6 +100,7 @@ def _screening_catalog() -> List[StrategyCatalogEntry]:
             description="指定 strategy_table，调用 check_* 选股函数，命中则次日买入。",
             category="screening",
             tags=["选股", "桥接"],
+            dependency_domains=["canonical_daily_bar", "universe_table"],
             param_defs=[
                 ParamDef(
                     "strategy_table",
@@ -124,6 +125,7 @@ def _screening_catalog() -> List[StrategyCatalogEntry]:
                 description=f"回测桥接日批选股逻辑（表 {table}），命中则次日买入。",
                 category="screening",
                 tags=["选股", cn],
+                dependency_domains=["canonical_daily_bar", "universe_table"],
                 param_defs=[
                     ParamDef("strategy_table", "选股表名", "str", table, required=True),
                 ],
@@ -143,6 +145,7 @@ def _portfolio_catalog() -> List[StrategyCatalogEntry]:
             description="从选股/策略信号表读取候选，定期等权调仓，跌出 Top-N 可卖出。",
             category="portfolio",
             tags=["组合", "调仓", "TopN"],
+            dependency_domains=["canonical_daily_bar", "universe_table"],
             param_defs=[
                 ParamDef("table", "信号表", "str", tbs.TABLE_CN_STOCK_SELECTION["name"], required=True),
                 ParamDef("top_n", "持有数量", "int", 10, min=1, max=50),

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import { goOpsRun } from "@/utils/navLinks";
 
 function todayIso(): string {
   const d = new Date();
@@ -14,6 +16,8 @@ const dateFrom = ref("2006-01-01");
 const dateTo = ref(todayIso());
 const adjustType = ref<"raw" | "qfq">("raw");
 const codesText = ref("600000");
+const router = useRouter();
+const repairLoading = ref(false);
 
 const adjustLabel = computed(() =>
   adjustType.value === "qfq" ? "前复权（qfq）" : "不复权（raw）"
@@ -72,6 +76,56 @@ async function runCheck() {
 
 const canonDomain = () =>
   report.value?.backtest_prerequisites?.domains?.canonical_daily_bar;
+
+function goRunWithCurrentScope() {
+  void router.push({
+    path: "/backtest/run",
+    query: {
+      from: dateFrom.value,
+      to: dateTo.value,
+      priceMode: adjustType.value,
+      codes: codesText.value,
+    },
+  });
+}
+
+async function triggerRepair() {
+  repairLoading.value = true;
+  try {
+    const body =
+      adjustType.value === "qfq"
+        ? {
+            job_id: "derive_qfq_from_tdx_job",
+            date_mode: "range",
+            date_start: dateFrom.value,
+            date_end: dateTo.value,
+            qfq_mode: "incremental",
+          }
+        : {
+            job_id: "sync_bars_mootdx_local_job",
+            date_mode: "range",
+            date_start: dateFrom.value,
+            date_end: dateTo.value,
+            derive_qfq_after: false,
+          };
+    const r = await fetch("/instock/api/sync/trigger", {
+      method: "POST",
+      headers: { "Content-Type": "application/json;charset=UTF-8" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!j.ok || !j.run?.id) {
+      ElMessage.error(j.error || "触发修复失败");
+      return;
+    }
+    ElMessage.success("修复任务已启动，完成后请回到本页复检");
+    goOpsRun(router, j.run.id);
+  } catch (e) {
+    ElMessage.error(String(e));
+  } finally {
+    repairLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -116,6 +170,8 @@ const canonDomain = () =>
         </el-col>
       </el-row>
       <el-button type="primary" :loading="loading" @click="runCheck">检查</el-button>
+      <el-button :loading="repairLoading" @click="triggerRepair">按当前区间触发修复</el-button>
+      <el-button @click="goRunWithCurrentScope">带当前区间运行回测</el-button>
     </el-form>
 
     <el-alert

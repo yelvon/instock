@@ -7,14 +7,24 @@ import datetime
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import instock.core.tablestructure as tbs
 import instock.lib.database as mdb
 import pymysql
 
-STRATEGY_TABLES = {item["name"] for item in tbs.TABLE_CN_STOCK_STRATEGIES}
-ALLOWED_SELECTION_TABLES = {
-    tbs.TABLE_CN_STOCK_SELECTION["name"],
-}
+
+def _tbs():
+    import instock.core.tablestructure as tbs
+
+    return tbs
+
+
+def _strategy_tables() -> Set[str]:
+    tbs = _tbs()
+    return {item["name"] for item in tbs.TABLE_CN_STOCK_STRATEGIES}
+
+
+def _allowed_selection_tables() -> Set[str]:
+    tbs = _tbs()
+    return {tbs.TABLE_CN_STOCK_SELECTION["name"]}
 
 
 def _zcode(v: Any) -> str:
@@ -40,9 +50,9 @@ def max_universe_size(payload: Dict[str, Any]) -> int:
 
 def _table_meta(table: str) -> Tuple[str, str]:
     table = str(table or "").strip()
-    if table in STRATEGY_TABLES:
+    if table in _strategy_tables():
         return table, "date"
-    if table in ALLOWED_SELECTION_TABLES:
+    if table in _allowed_selection_tables():
         return table, "date"
     raise ValueError(f"不支持的 universe 表: {table}")
 
@@ -53,9 +63,10 @@ def _build_filter_sql(
     if not filters:
         return "", []
     cols = set()
+    tbs = _tbs()
     if table == tbs.TABLE_CN_STOCK_SELECTION["name"]:
         cols = set(tbs.TABLE_CN_STOCK_SELECTION["columns"].keys())
-    elif table in STRATEGY_TABLES:
+    elif table in _strategy_tables():
         cols = set(tbs.TABLE_CN_STOCK_FOREIGN_KEY["columns"].keys())
     parts: List[str] = []
     args: List[Any] = []
@@ -144,6 +155,7 @@ def resolve_universe_codes(payload: Dict[str, Any]) -> Tuple[List[str], Dict[str
     if ut in ("selection_table", "strategy_table"):
         table = str(uni.get("table") or "").strip()
         if ut == "selection_table" and not table:
+            tbs = _tbs()
             table = tbs.TABLE_CN_STOCK_SELECTION["name"]
         if ut == "strategy_table" and not table:
             table = "cn_stock_strategy_enter"

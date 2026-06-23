@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { goOps } from "@/utils/navLinks";
+import { goOps, goOpsRun } from "@/utils/navLinks";
 import { Refresh, VideoPlay, VideoPause } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import PageShell from "@/components/ui/PageShell.vue";
@@ -479,6 +479,14 @@ async function loadRuns() {
   if (run && !trackingId.value) startPoll(run.id);
 }
 
+async function focusRunFromRoute() {
+  const runId = String(route.query.runId || "").trim();
+  if (!runId) return;
+  activeTab.value = "runs";
+  await loadRuns();
+  await showDetail(runId);
+}
+
 async function loadBatches() {
   batchMsg.value = "加载中…";
   let url = "/instock/api/sync/data_batches?limit=80";
@@ -813,6 +821,7 @@ function startPoll(id: string, label?: string) {
 
 function onMootdxRunStarted(runId: string, label: string) {
   startPoll(runId, label);
+  goOpsRun(router, runId);
 }
 
 function stopPoll() {
@@ -1030,6 +1039,14 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => route.query.runId,
+  () => {
+    void focusRunFromRoute();
+  },
+  { immediate: true }
+);
+
 onMounted(async () => {
   document.documentElement.classList.add("dark");
   const syncOps = useSyncOpsStore();
@@ -1040,6 +1057,7 @@ onMounted(async () => {
   await loadScheduler();
   initDhDates();
   void loadGovEnv();
+  void focusRunFromRoute();
 });
 
 onUnmounted(() => {

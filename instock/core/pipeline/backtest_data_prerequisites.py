@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import instock.core.pipeline.gaps as gaps
-import instock.core.tablestructure as tbs
 
 # 全量检查（选股/指标策略等）
 FULL_DOMAINS = ("trade_calendar", "daily_spot_snapshot", "derived_indicators")
@@ -26,6 +25,7 @@ class DomainGapReport:
     table: str = ""
     suggested_jobs: List[str] = field(default_factory=list)
     code_missing: Dict[str, List[str]] = field(default_factory=dict)
+    quality_issues: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -51,15 +51,22 @@ class PrerequisitesReport:
                     "table": v.table,
                     "suggested_jobs": v.suggested_jobs,
                     "code_missing": v.code_missing,
+                    "quality_issues": v.quality_issues,
                 }
                 for k, v in self.domains.items()
             },
         }
 
 
-_DERIVED_TABLES = (
-    tbs.TABLE_CN_STOCK_INDICATORS["name"],
-)
+def _tablestructure():
+    import instock.core.tablestructure as tbs
+
+    return tbs
+
+
+def _derived_tables() -> tuple:
+    tbs = _tablestructure()
+    return (tbs.TABLE_CN_STOCK_INDICATORS["name"],)
 
 
 def domains_for_profile(profile: Optional[str]) -> List[str]:
@@ -143,6 +150,10 @@ def check_backtest_data(
             ),
             code_missing=per_code,
         )
+        quality = gaps.detect_canonical_quality_issues(
+            date_from, date_to, adjust_type=adjust_type, codes=codes
+        )
+        dr.quality_issues = quality
         report.domains["canonical_daily_bar"] = dr
         if miss or per_code:
             report.ok = False
@@ -153,8 +164,17 @@ def check_backtest_data(
             else:
                 tbl = dr.table or "cn_stock_daily_bar"
                 report.messages.append(f"{tbl} 缺 {len(miss)} 个交易日")
+        if any(int(v or 0) > 0 for v in quality.values()):
+            report.ok = False
+            report.messages.append(
+                "标准日线质量异常："
+                f"suspect={quality.get('suspect', 0)}，"
+                f"partial={quality.get('partial', 0)}，"
+                f"low_score={quality.get('low_score', 0)}"
+            )
 
     if "daily_spot_snapshot" in domains:
+        tbs = _tablestructure()
         miss, extra = gaps.detect_stock_spot_gaps(date_from, date_to)
         dr = DomainGapReport(
             domain_id="daily_spot_snapshot",
@@ -170,7 +190,7 @@ def check_backtest_data(
 
     if "derived_indicators" in domains:
         all_miss: List[datetime.date] = []
-        for tn in _DERIVED_TABLES:
+        for tn in _derived_tables():
             miss, extra = gaps.detect_table_date_gaps(tn, date_from, date_to)
             if miss:
                 all_miss = sorted(set(all_miss) | set(miss))

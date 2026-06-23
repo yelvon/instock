@@ -43,7 +43,7 @@ import {
   goBars,
   goGaps,
   goIngest,
-  goOps,
+  goOpsRun,
 } from "@/utils/navLinks";
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent]);
@@ -52,6 +52,7 @@ const router = useRouter();
 const route = useRoute();
 const runs = ref<BacktestRunListItem[]>([]);
 const selectedId = ref("");
+const selectedCompareIds = ref<string[]>([]);
 const detail = ref<BacktestRunDetail | null>(null);
 const loading = ref(false);
 const detailLoading = ref(false);
@@ -365,12 +366,12 @@ async function triggerKlineSync() {
       }),
     });
     const j = await r.json();
-    if (!j.ok) {
+    if (!j.ok || !j.run?.id) {
       ElMessage.error(j.error || "触发补数失败");
       return;
     }
     ElMessage.success("K 线补数任务已触发，可在数据运维查看进度");
-    goOps(router, "runs");
+    goOpsRun(router, j.run.id);
   } catch (e) {
     ElMessage.error(String(e));
   } finally {
@@ -401,6 +402,20 @@ function clearSelection() {
   if (isNarrow.value) viewMode.value = "list";
 }
 
+function applyRoutePrefill() {
+  const from = String(route.query.from || "");
+  const to = String(route.query.to || "");
+  const priceMode = String(route.query.priceMode || "");
+  const codesRaw = String(route.query.codes || "");
+  if (from) form.value.dateFrom = from;
+  if (to) form.value.dateTo = to;
+  if (priceMode === "raw" || priceMode === "qfq") form.value.priceMode = priceMode;
+  if (codesRaw) {
+    form.value.universeType = "codes";
+    form.value.codesText = codesRaw;
+  }
+}
+
 function backToList() {
   viewMode.value = "list";
 }
@@ -414,6 +429,19 @@ const precheckCodeMissing = computed(() => {
   const d = precheck.value?.backtest_prerequisites?.domains?.canonical_daily_bar;
   return d?.code_missing || {};
 });
+const createGapMessages = computed(() => {
+  const messages = createGapReport.value?.messages;
+  return Array.isArray(messages) ? messages.map(String) : [];
+});
+const createGapCanon = computed(() => {
+  const domains = createGapReport.value?.domains as
+    | Record<string, { missing_trade_dates?: string[]; code_missing?: Record<string, string[]>; quality_issues?: Record<string, number>; suggested_jobs?: string[] }>
+    | undefined;
+  return domains?.canonical_daily_bar || {};
+});
+const createGapMissingDates = computed(() => createGapCanon.value.missing_trade_dates || []);
+const createGapCodeMissing = computed(() => createGapCanon.value.code_missing || {});
+const createGapQuality = computed(() => createGapCanon.value.quality_issues || {});
 
 async function cancelRun(id: string) {
   await cancelBacktestRun(id);
@@ -484,7 +512,7 @@ async function loadResearchBatch() {
 }
 
 async function runCompare() {
-  const ids = researchForm.value.compareIds
+  const ids = (selectedCompareIds.value.length >= 2 ? selectedCompareIds.value.join(",") : researchForm.value.compareIds)
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
@@ -498,6 +526,20 @@ async function runCompare() {
   } catch (e) {
     ElMessage.error(String(e));
   }
+}
+
+function compareSelectedRuns() {
+  if (selectedCompareIds.value.length < 2) {
+    ElMessage.warning("请至少勾选 2 个历史 run");
+    return;
+  }
+  researchForm.value.compareIds = selectedCompareIds.value.join(",");
+  resultTab.value = "research";
+  void runCompare();
+}
+
+function onCompareSelectionChange(rows: BacktestRunListItem[]) {
+  selectedCompareIds.value = rows.map((r) => r.id);
 }
 
 function exportCurrentRun() {
@@ -593,6 +635,7 @@ async function loadStrategies() {
 }
 
 onMounted(() => {
+  applyRoutePrefill();
   narrowMql = window.matchMedia("(max-width: 1100px)");
   isNarrow.value = narrowMql.matches;
   narrowMql.addEventListener("change", onNarrowChange);
@@ -633,14 +676,27 @@ onUnmounted(() => {
           highlight-current-row
           class="runs-table"
           :row-class-name="({ row }: { row: BacktestRunListItem }) => (row.id === selectedId ? 'is-active' : '')"
+          @selection-change="onCompareSelectionChange"
           @row-click="(row: BacktestRunListItem) => selectRun(row.id)"
         >
+          <el-table-column type="selection" width="38" />
           <el-table-column prop="status" label="状态" width="86">
             <template #default="{ row }">
               <el-tag size="small" :type="row.status === 'success' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">{{ row.status }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="title" label="名称" min-width="120" />
+          <el-table-column label="进度" width="110">
+            <template #default="{ row }">
+              <el-progress
+                v-if="row.status === 'running' || row.status === 'queued'"
+                :percentage="row.progress?.totalDays ? Math.round(((row.progress?.processedDays || 0) / row.progress.totalDays) * 100) : 0"
+                :indeterminate="!row.progress?.totalDays"
+                :stroke-width="6"
+              />
+              <span v-else class="muted">{{ row.progress?.message || "—" }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="收益" width="80"><template #default="{ row }">{{ pct(row.summary?.totalReturn) }}</template></el-table-column>
           <el-table-column label="回撤" width="80"><template #default="{ row }">{{ pct(row.summary?.maxDrawdown) }}</template></el-table-column>
           <el-table-column label="操作" width="100">
@@ -650,6 +706,14 @@ onUnmounted(() => {
             </template>
           </el-table-column>
         </el-table>
+        <el-button
+          class="mt-mini"
+          size="small"
+          :disabled="selectedCompareIds.length < 2"
+          @click="compareSelectedRuns"
+        >
+          对比勾选 run
+        </el-button>
       </el-card>
 
       <div v-show="!isNarrow || viewMode === 'detail'" class="bt-main-panel">
@@ -708,6 +772,17 @@ onUnmounted(() => {
             <p v-if="selectedStrategy?.description" class="field-hint">
               {{ selectedStrategy.description }}
             </p>
+            <el-space v-if="selectedStrategy?.dependencyDomains?.length" wrap class="mt-mini">
+              <el-text size="small" type="info">依赖数据：</el-text>
+              <el-tag
+                v-for="domain in selectedStrategy.dependencyDomains"
+                :key="domain"
+                size="small"
+                type="info"
+              >
+                {{ domain }}
+              </el-tag>
+            </el-space>
           </el-form-item>
           <el-row v-if="paramDefs.length" :gutter="8" class="param-row">
             <el-col v-for="p in paramDefs" :key="p.key" :span="12">
@@ -752,12 +827,22 @@ onUnmounted(() => {
           <el-row :gutter="8">
             <el-col :span="12">
               <el-form-item label="开始日期">
-                <el-input v-model="form.dateFrom" />
+                <el-date-picker
+                  v-model="form.dateFrom"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
               </el-form-item>
             </el-col>
             <el-col :span="12">
               <el-form-item label="结束日期">
-                <el-input v-model="form.dateTo" />
+                <el-date-picker
+                  v-model="form.dateTo"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
               </el-form-item>
             </el-col>
           </el-row>
@@ -899,7 +984,18 @@ onUnmounted(() => {
             title="创建失败：回测主数据缺失"
           >
             <template #default>
-              <pre class="mini-pre">{{ JSON.stringify(createGapReport, null, 2) }}</pre>
+              <div class="gap-box">
+                <div v-if="createGapMessages.length">{{ createGapMessages.join("；") }}</div>
+                <div v-if="createGapMissingDates.length">
+                  标准日线缺交易日：{{ createGapMissingDates.slice(0, 8).join(", ") }}{{ createGapMissingDates.length > 8 ? "…" : "" }}
+                </div>
+                <div v-for="(dates, c) in createGapCodeMissing" :key="c" class="muted">
+                  {{ c }} 缺 {{ dates.length }} 日（示例 {{ dates.slice(0, 4).join(", ") }}）
+                </div>
+                <div v-if="Object.values(createGapQuality).some((n) => Number(n) > 0)" class="muted">
+                  质量问题：suspect={{ createGapQuality.suspect || 0 }}，partial={{ createGapQuality.partial || 0 }}，low_score={{ createGapQuality.low_score || 0 }}
+                </div>
+              </div>
               <el-space wrap>
                 <el-button link type="primary" @click="goBacktestDataTab('ingest')">准备数据 · 补数</el-button>
                 <el-button link type="primary" @click="goBacktestDataTab('gaps')">缺口诊断</el-button>

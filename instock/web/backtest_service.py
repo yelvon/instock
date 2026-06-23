@@ -134,6 +134,25 @@ def _normalize_price_mode(value: object) -> str:
     return mode if mode in ("raw", "qfq") else "raw"
 
 
+def _lineage_for_payload(payload: Dict[str, Any], price_mode: str) -> Dict[str, Any]:
+    from instock.core.canonical.bar_tables import resolve_bar_table
+
+    return {
+        "profile": str((payload.get("data") or {}).get("profile") or "backtest"),
+        "priceMode": price_mode,
+        "barTable": resolve_bar_table(price_mode),
+        "barProvider": "canonical",
+        "barBatchId": None,
+        "mixedSource": False,
+        "legacyCacheFallback": os.environ.get("INSTOCK_BACKTEST_ALLOW_LEGACY_CACHE", "1")
+        .strip()
+        .lower()
+        not in ("0", "false", "no"),
+        "prerequisites": payload.get("_prerequisites_report")
+        or {"ok": True, "skipped": True},
+    }
+
+
 def _load_bars(
     code: str,
     date_from: str,
@@ -257,6 +276,10 @@ def _execute(run_id: str, payload: Dict[str, Any]) -> None:
             result["params"]["priceMode"] = price_mode
             result["params"]["slippageBps"] = slippage_bps
             result["params"]["matchPrice"] = match_price
+        result["lineage"] = {
+            **(result.get("lineage") or {}),
+            **_lineage_for_payload(payload, price_mode),
+        }
         benchmark_spec = payload.get("benchmark")
         if benchmark_spec:
             from instock.core.backtest.benchmark import enrich_result_with_benchmark
@@ -316,6 +339,7 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
     validate_params(strategy_id, raw_params)
 
     data_opts = payload.get("data") or {}
+    prerequisites_report: Dict[str, Any] = {"ok": True, "skipped": True}
     if bool(data_opts.get("requirePrerequisites", True)):
         try:
             from instock.core.pipeline.backtest_data_prerequisites import check_backtest_data
@@ -331,12 +355,14 @@ def start_run(payload: Dict[str, Any], *, run_inline: bool = False) -> Dict[str,
                 adjust_type=price_mode,
                 universe_table=_universe_table(payload),
             ).to_dict()
+            prerequisites_report = report
             if not report.get("ok"):
                 raise BacktestDataGapError(report)
         except BacktestDataGapError:
             raise
         except Exception as e:
             raise ValueError(f"回测前置数据检查失败：{e}") from e
+    payload["_prerequisites_report"] = prerequisites_report
     run_id = str(uuid.uuid4())
     date_from, date_to = _date_range(payload)
     _, universe_meta = _resolve_universe(payload)

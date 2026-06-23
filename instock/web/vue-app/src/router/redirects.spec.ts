@@ -4,9 +4,13 @@ import { legacyJobInnerTab, normalizeOpsTab } from "../utils/navLinks";
 
 describe("router redirects", () => {
   it("resolves string redirects for backtest legacy paths", () => {
-    expect(router.resolve("/backtest-data/bars").path).toBe("/backtest/data/bars");
-    expect(router.resolve("/backtest-data").path).toBe("/backtest/data/overview");
-    expect(router.resolve("/backtest").path).toBe("/backtest/run");
+    const legacyBars = router.resolve("/backtest-data/bars");
+    const legacyRoot = router.resolve("/backtest-data");
+    const backtestRoot = router.resolve("/backtest");
+
+    expect(legacyBars.matched[1].redirect).toBeTypeOf("function");
+    expect(legacyRoot.matched[1].redirect).toBe("/backtest/data/overview");
+    expect(backtestRoot.matched[1].redirect).toBe("/backtest/run");
   });
 
   it("maps /jobs query through normalizeOpsTab + jobTab (redirect target)", () => {

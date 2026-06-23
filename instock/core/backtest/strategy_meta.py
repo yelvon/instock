@@ -44,6 +44,7 @@ class StrategyCatalogEntry:
     tags: List[str] = field(default_factory=list)
     param_defs: List[ParamDef] = field(default_factory=list)
     deprecated: bool = False
+    dependency_domains: List[str] = field(default_factory=lambda: ["canonical_daily_bar"])
 
 
 def _infer_type(value: Any) -> str:

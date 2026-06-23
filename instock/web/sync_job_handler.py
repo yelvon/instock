@@ -145,6 +145,7 @@ class SyncRunPostHandler(webBase.BaseHandler, ABC):
                 bar_data_source=(body.get("bar_data_source") or ""),
                 extra_env=extra_env,
                 derive_qfq_after=derive_qfq,
+                limit=int(body.get("limit") or 0),
             )
             self.write(json.dumps({"ok": True, "run": rec}, ensure_ascii=False))
         except Exception as e:

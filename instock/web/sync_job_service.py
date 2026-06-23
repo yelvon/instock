@@ -651,6 +651,7 @@ def retry_from_run(run_id: str) -> Dict[str, Any]:
         trigger_source="manual",
         schedule_id="",
         schedule_title="",
+        limit=int(old.get("limit") or 0),
     )
 
 
@@ -658,16 +659,19 @@ def _mootdx_bars_cli_args(
     date_mode: str, date_start: str, date_end: str
 ) -> List[str]:
     """mootdx_bars_sync_job 使用 --from-date/--to-date，与按日作业的位置参数不同。"""
-    import datetime
-
-    import instock.lib.trade_time as trd
 
     dm = (date_mode or "default").strip().lower()
     if dm == "default":
+        import datetime
+        import instock.lib.trade_time as trd
+
         today = datetime.date.today().isoformat()
         ds, _ = trd.get_trade_hist_interval(today)
         return ["--from-date", ds]
     if dm == "week":
+        import datetime
+        import instock.lib.trade_time as trd
+
         today = datetime.date.today().isoformat()
         return ["--from-date", trd.get_recent_week_start(today)]
     if dm == "range":
@@ -703,6 +707,7 @@ def _build_command(
     date_end: str,
     date_list: str,
     qfq_mode: str = "incremental",
+    limit: int = 0,
 ) -> List[str]:
     job = next((j for j in JOB_ITEMS if j["id"] == job_id), None)
     if not job:
@@ -720,6 +725,14 @@ def _build_command(
         return cmd
     if job_id == "derive_qfq_from_tdx_job":
         cmd.extend(["--mode", normalize_qfq_mode(qfq_mode)])
+        dm = (date_mode or "default").strip().lower()
+        if dm == "range":
+            ds = (date_start or "").strip()
+            de = (date_end or "").strip()
+            if ds:
+                cmd.extend(["--from-date", ds])
+            if de:
+                cmd.extend(["--to-date", de])
         return cmd
     if job_id == "sync_tdx_local_pipeline_job":
         cmd.extend(["--qfq-mode", normalize_qfq_mode(qfq_mode)])
@@ -728,6 +741,8 @@ def _build_command(
     if canon_src:
         cmd.extend(["--source", canon_src])
         cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
+        if limit > 0:
+            cmd.extend(["--limit", str(limit)])
         if canon_src == "akshare":
             cmd.extend(["--workers", "2", "--sleep", "0.35"])
         elif canon_src == "mootdx_local":
@@ -735,6 +750,8 @@ def _build_command(
         return cmd
     if job_id == "mootdx_bars_sync_job":
         cmd.extend(_mootdx_bars_cli_args(date_mode, date_start, date_end))
+        if limit > 0:
+            cmd.extend(["--limit", str(limit)])
         return cmd
     dm = (date_mode or "default").strip().lower()
     if dm == "default":
@@ -1022,13 +1039,23 @@ def start_job(
     schedule_title: str = "",
     extra_env: Optional[Dict[str, str]] = None,
     derive_qfq_after: bool = True,
+    limit: int = 0,
 ) -> Dict[str, Any]:
     qfq_saved = ""
     if job_id in QFQ_MODE_JOB_IDS:
         qfq_saved = normalize_qfq_mode(qfq_mode)
     elif job_id in JOBS_WITH_QFQ_AFTER_RAW:
         qfq_saved = normalize_qfq_mode(qfq_mode) if derive_qfq_after else "off"
-    cmd = _build_command(job_id, date_mode, date_start, date_end, date_list, qfq_mode=qfq_saved or "incremental")
+    safe_limit = max(0, int(limit or 0))
+    cmd = _build_command(
+        job_id,
+        date_mode,
+        date_start,
+        date_end,
+        date_list,
+        qfq_mode=qfq_saved or "incremental",
+        limit=safe_limit,
+    )
     merged_extra = dict(extra_env or {})
     if job_id in JOBS_WITH_QFQ_AFTER_RAW:
         merged_extra["INSTOCK_QFQ_DERIVE_MODE"] = (
@@ -1079,6 +1106,7 @@ def start_job(
         "batch_ids": [],
         "extra_env": merged_extra,
         "derive_qfq_after": bool(derive_qfq_after) if job_id in JOBS_WITH_QFQ_AFTER_RAW else None,
+        "limit": safe_limit,
     }
     with _LOCK:
         _RUNS[run_id] = rec

@@ -114,7 +114,7 @@ async function triggerJob(
     payload.qfq_mode = qfqMode.value;
   }
   if (barLimit.value > 0 && jobId.includes("bars")) {
-    ElMessage.info("试跑 limit 请用命令行 --limit；页面将跑全市场");
+    payload.limit = barLimit.value;
   }
   try {
     const r = await fetch("/instock/api/sync/trigger", {
@@ -289,6 +289,12 @@ onMounted(() => void loadStatus());
             qfq 表为空时首次会自动全历史派生。需已 ingest gbbq。
           </el-text>
         </el-form-item>
+        <el-form-item label="试跑股票数">
+          <el-input-number v-model="barLimit" :min="0" :max="5000" :step="10" />
+          <el-text size="small" type="info" style="display: block; margin-top: 6px">
+            0 表示全市场；首次验证挂载和写入链路时可填 20，只处理证券主表前 N 只。
+          </el-text>
+        </el-form-item>
         <el-form-item label="操作">
           <el-space wrap>
             <el-button
@@ -322,8 +328,7 @@ onMounted(() => void loadStatus());
         </el-form-item>
       </el-form>
       <el-text size="small" type="info">
-        Parallels 需保持虚拟机开机；盘后请在 Win 通达信执行「盘后数据下载」。试跑可加命令行
-        <code>--limit 20</code>。
+        Parallels 需保持虚拟机开机；盘后请在 Win 通达信执行「盘后数据下载」。
       </el-text>
     </el-card>
 

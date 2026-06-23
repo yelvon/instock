@@ -7,13 +7,13 @@ import datetime
 import logging
 from typing import List, Set, Tuple
 
-import instock.core.tablestructure as tbs
 import instock.core.pipeline.trade_calendar as tcal
 import instock.lib.database as mdb
-from instock.core.pipeline.data_source import get_default_market_data_source
 
 
 def _dates_in_spot_between(date_from: datetime.date, date_to: datetime.date) -> Set[datetime.date]:
+    import instock.core.tablestructure as tbs
+
     table = tbs.TABLE_CN_STOCK_SPOT["name"]
     if not mdb.checkTableIsExist(table):
         return set()
@@ -41,6 +41,8 @@ def _expected_trade_dates(
     tcal.ensure_table()
     if tcal.table_row_count() > 0:
         return tcal.load_open_dates_between(date_from, date_to)
+    from instock.core.pipeline.data_source import get_default_market_data_source
+
     src = get_default_market_data_source()
     td = src.fetch_trade_dates()
     if not td:
@@ -266,3 +268,45 @@ def detect_canonical_daily_bar_gaps(
     missing = sorted(exp_set - actual)
     extra = sorted(actual - exp_set) if exp_set else []
     return missing, extra, per_code
+
+
+def detect_canonical_quality_issues(
+    date_from: datetime.date,
+    date_to: datetime.date,
+    *,
+    adjust_type: str = "raw",
+    codes=None,
+    min_completeness_score: int = 80,
+) -> dict:
+    """统计回测区间内标准日线质量问题。"""
+    from instock.core.canonical.bar_tables import resolve_bar_table
+
+    table = resolve_bar_table(adjust_type)
+    out = {"suspect": 0, "partial": 0, "low_score": 0}
+    if not mdb.checkTableIsExist(table):
+        return out
+
+    clauses = ["`date` >= %s", "`date` <= %s"]
+    params: list = [date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")]
+    norm_codes = [str(c).zfill(6)[:6] for c in (codes or []) if str(c).strip()]
+    if norm_codes:
+        placeholders = ",".join(["%s"] * len(norm_codes))
+        clauses.append(f"`code` IN ({placeholders})")
+        params.extend(norm_codes)
+    where = " AND ".join(clauses)
+    sql = (
+        "SELECT "
+        "SUM(CASE WHEN `quality_status`='suspect' THEN 1 ELSE 0 END) AS suspect, "
+        "SUM(CASE WHEN `quality_status`='partial' THEN 1 ELSE 0 END) AS partial, "
+        "SUM(CASE WHEN `completeness_score` < %s THEN 1 ELSE 0 END) AS low_score "
+        f"FROM `{table}` WHERE {where}"
+    )
+    rows = mdb.executeSqlFetch(sql, tuple([min_completeness_score] + params)) or []
+    if not rows:
+        return out
+    row = rows[0]
+    return {
+        "suspect": int(row[0] or 0),
+        "partial": int(row[1] or 0),
+        "low_score": int(row[2] or 0),
+    }

@@ -99,6 +99,30 @@ class BacktestServiceTests(unittest.TestCase):
         self.assertTrue(detail["dailyAccounts"])
         self.assertEqual(svc.list_runs(10)[0]["id"], run["id"])
 
+    def test_successful_run_records_data_lineage_summary(self):
+        from instock.web import backtest_service as svc
+
+        svc.reset_for_tests()
+        run = svc.start_run(
+            {
+                "title": "血缘测试",
+                "dateFrom": "2024-01-02",
+                "dateTo": "2024-01-09",
+                "universe": {"type": "codes", "codes": ["600000"]},
+                "strategy": {"id": "moving_average_cross", "params": {"fast": 2, "slow": 3}},
+                "broker": {"initialCash": 100000},
+                "data": {"requirePrerequisites": False, "priceMode": "qfq"},
+            },
+            run_inline=True,
+        )
+
+        detail = svc.get_run(run["id"])
+
+        self.assertEqual(detail["params"]["priceMode"], "qfq")
+        self.assertEqual(detail["lineage"]["priceMode"], "qfq")
+        self.assertEqual(detail["lineage"]["barTable"], "cn_stock_daily_bar_qfq")
+        self.assertIn("prerequisites", detail["lineage"])
+
     def test_cancelled_run_is_not_overwritten_by_success(self):
         from instock.web import backtest_service as svc
 

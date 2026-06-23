@@ -46,6 +46,15 @@ export function goOps(
   void router.push({ path: "/ops", query: { tab, ...(extra || {}) } });
 }
 
+export function opsRunsQuery(runId?: string): Record<string, string> {
+  const id = String(runId || "").trim();
+  return id ? { tab: "runs", runId: id } : { tab: "runs" };
+}
+
+export function goOpsRun(router: Router, runId?: string) {
+  void router.push({ path: "/ops", query: opsRunsQuery(runId) });
+}
+
 export function goSync(router: Router) {
   goOps(router, "quick");
 }

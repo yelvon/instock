@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import MootdxLocalPanel from "@/features/mootdx/MootdxLocalPanel.vue";
-import { goOps } from "@/utils/navLinks";
+import { goOps, goOpsRun } from "@/utils/navLinks";
 
 const router = useRouter();
 
-function onRunStarted() {
-  goOps(router, "runs");
+function onRunStarted(runId?: string) {
+  if (runId) goOpsRun(router, runId);
+  else goOps(router, "runs");
 }
 </script>
 

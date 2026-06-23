@@ -34,6 +34,7 @@ class StrategyMeta:
     param_schema: Dict[str, Any] = field(default_factory=dict)
     deprecated: bool = False
     source: str = "builtin"
+    dependency_domains: List[str] = field(default_factory=lambda: ["canonical_daily_bar"])
 
 
 _REGISTRY: Dict[str, StrategyMeta] = {}
@@ -52,6 +53,7 @@ def register(
     deprecated: bool = False,
     source: str = "plugin",
     param_defs: Optional[List[ParamDef]] = None,
+    dependency_domains: Optional[List[str]] = None,
 ) -> None:
     params = param_defs if param_defs is not None else normalize_param_schema(
         param_schema, strategy_cls=strategy_cls
@@ -67,6 +69,7 @@ def register(
         param_schema=param_defaults_dict(params),
         deprecated=deprecated,
         source=source,
+        dependency_domains=list(dependency_domains or ["canonical_daily_bar"]),
     )
 
 
@@ -80,6 +83,7 @@ def register_catalog_entry(entry: Any) -> None:
         tags=entry.tags,
         param_defs=entry.param_defs,
         source="builtin",
+        dependency_domains=entry.dependency_domains,
     )
 
 
@@ -108,6 +112,7 @@ def list_strategies() -> List[Dict[str, Any]]:
                 "source": m.source,
                 "paramSchema": dict(m.param_schema),
                 "params": [p.to_dict() for p in m.params],
+                "dependencyDomains": list(m.dependency_domains),
             }
         )
     items.sort(key=lambda x: (x.get("category") or "", x.get("title") or ""))

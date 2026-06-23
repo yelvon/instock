@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { legacyJobInnerTab, normalizeOpsTab } from "./navLinks";
+import { legacyJobInnerTab, opsRunsQuery, normalizeOpsTab } from "./navLinks";
 
 describe("normalizeOpsTab", () => {
   it("maps legacy job center tabs to ops tabs", () => {
@@ -26,5 +26,15 @@ describe("legacyJobInnerTab", () => {
   it("returns undefined for ops-level tabs", () => {
     expect(legacyJobInnerTab("jobs")).toBeUndefined();
     expect(legacyJobInnerTab("quick")).toBeUndefined();
+  });
+});
+
+describe("opsRunsQuery", () => {
+  it("builds a runs tab query with the selected run id", () => {
+    expect(opsRunsQuery("abc-123")).toEqual({ tab: "runs", runId: "abc-123" });
+  });
+
+  it("omits blank run ids", () => {
+    expect(opsRunsQuery(" ")).toEqual({ tab: "runs" });
   });
 });

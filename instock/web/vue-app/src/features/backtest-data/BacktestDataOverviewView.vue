@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { goBars, goGaps, goIngest, goOps } from "@/utils/navLinks";
+import {
+  buildMaintenanceGuide,
+  type GuideStepStatus,
+  type LocalDataStatus,
+} from "@/utils/maintenanceGuide";
 
 interface CanonicalSummary {
   ready?: boolean;
@@ -21,7 +26,25 @@ interface CanonicalSummary {
 const router = useRouter();
 const loading = ref(false);
 const canonical = ref<CanonicalSummary | null>(null);
+const local = ref<LocalDataStatus | null>(null);
 const error = ref("");
+
+const guide = computed(() => buildMaintenanceGuide(local.value, canonical.value));
+
+function stepType(status: GuideStepStatus): "success" | "warning" | "danger" | "info" {
+  if (status === "done") return "success";
+  if (status === "warning") return "warning";
+  if (status === "blocked") return "danger";
+  return "info";
+}
+
+function runNextAction() {
+  const target = guide.value.nextAction?.target;
+  if (target === "configure" || target === "ingest") goIngest(router);
+  else if (target === "qfq") goOps(router, "jobs");
+  else if (target === "gaps") goGaps(router);
+  else if (target === "backtest") router.push("/backtest/run");
+}
 
 async function load(exact = false) {
   loading.value = true;
@@ -36,6 +59,11 @@ async function load(exact = false) {
     }
     const { ok: _ok, ...rest } = j;
     canonical.value = rest as CanonicalSummary;
+    const ds = await fetch("/instock/api/sync/data_sources?scope=panel");
+    const dsJson = await ds.json();
+    if (dsJson.ok) {
+      local.value = dsJson.mootdx_local || null;
+    }
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -65,6 +93,41 @@ onMounted(() => void load());
         class="mb"
         title="当前为快速估算（约），行数来自库表统计；股票数/质量可能来自上次精确统计。需要准确数字请点「精确统计」（约 15 秒）。"
       />
+      <el-card shadow="never" class="guide-card">
+        <template #header>
+          <div class="row-head">
+            <span>本地维护向导</span>
+            <el-tag :type="guide.readyForBacktest ? 'success' : 'warning'" size="small">
+              {{ guide.readyForBacktest ? "可进入回测" : "需要维护" }}
+            </el-tag>
+          </div>
+        </template>
+        <el-row :gutter="12">
+          <el-col v-for="step in guide.steps" :key="step.id" :span="6">
+            <el-card shadow="never" class="step-card">
+              <el-tag :type="stepType(step.status)" size="small">{{ step.status }}</el-tag>
+              <h4>{{ step.title }}</h4>
+              <p>{{ step.description }}</p>
+            </el-card>
+          </el-col>
+        </el-row>
+        <el-alert
+          v-if="guide.qualityWarning"
+          class="mt"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="guide.qualityWarning"
+        />
+        <el-space wrap class="mt">
+          <el-button type="primary" @click="runNextAction">
+            {{ guide.nextAction?.label || "查看下一步" }}
+          </el-button>
+          <el-button @click="goIngest(router)">补数</el-button>
+          <el-button @click="goGaps(router)">缺口诊断</el-button>
+          <el-button @click="router.push('/backtest/run')">运行回测</el-button>
+        </el-space>
+      </el-card>
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="状态">
           <el-tag :type="canonical.ready ? 'success' : 'info'" size="small">
@@ -126,5 +189,20 @@ onMounted(() => void load());
 }
 .mt {
   margin-top: 16px;
+}
+.guide-card {
+  margin-bottom: 16px;
+}
+.step-card {
+  min-height: 116px;
+}
+.step-card h4 {
+  margin: 8px 0 6px;
+}
+.step-card p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
 }
 </style>
